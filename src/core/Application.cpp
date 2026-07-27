@@ -2,9 +2,17 @@
 
 #include <iostream>
 
+namespace
+{
+constexpr int STAGE_STARTUP_MESSAGE = 1;
+}
+
 Application::Application()
 {
-    addStage("SAY_HELLO", "初始化前的管理员问候阶段");
+    setStageDetail(
+        STAGE_STARTUP_MESSAGE,
+        "启动前的基础提示阶段",
+        "如果没有看到启动提示，请检查标准输出是否可用。");
 }
 
 Application::~Application() = default;
@@ -16,11 +24,12 @@ std::string Application::moduleName() const
 
 void Application::run()
 {
-    sayHello();
+    showStartupMessage();
+    _uiThread.run();
 }
 
-void Application::sayHello()
+void Application::showStartupMessage()
 {
-    std::cout << "下午好，管理员。我是玘·蓝。你可以像他一样叫我玘小姐。" << std::endl;
-    setStageStatus("SAY_HELLO", true, "玘小姐已上线");
+    std::cout << "InkingBackendFramework started. Type help to view commands." << std::endl;
+    setStageStatus(STAGE_STARTUP_MESSAGE, "STARTUP_MESSAGE", true, "Application startup message printed");
 }

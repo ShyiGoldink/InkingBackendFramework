@@ -33,13 +33,6 @@ public:
      */
     static void error(const std::string &moduleName, const std::string &message);
 
-    /**
-     * @brief 写入一条蓝色日志。
-     * @param moduleName 产生日志的模块名称。
-     * @param message 日志内容。
-     */
-    static void blue(const std::string &moduleName, const std::string &message);
-
 private:
     /**
      * @brief 日志颜色类型。
@@ -48,8 +41,7 @@ private:
     {
         Black,
         Green,
-        Red,
-        Blue
+        Red
     };
     /**
      * @brief 确认日志文件存在。

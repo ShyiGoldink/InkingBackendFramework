@@ -2,7 +2,6 @@
 
 #include <chrono>
 #include <ctime>
-#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -18,6 +17,24 @@
 
 bool ShineLog::_checked = false;
 
+namespace
+{
+std::string directoryOf(const std::string& filePath)
+{
+    const std::size_t lastSlash = filePath.find_last_of("/\\");
+    if (lastSlash == std::string::npos) {
+        return ".";
+    }
+
+    return filePath.substr(0, lastSlash);
+}
+
+std::string logPathBesideExecutable(const std::string& executablePath)
+{
+    return directoryOf(executablePath) + "/Log.html";
+}
+}
+
 void ShineLog::write(const std::string& moduleName, const std::string& message)
 {
     writeLine(moduleName, message, Color::Black);
@@ -31,11 +48,6 @@ void ShineLog::pass(const std::string& moduleName, const std::string& message)
 void ShineLog::error(const std::string& moduleName, const std::string& message)
 {
     writeLine(moduleName, message, Color::Red);
-}
-
-void ShineLog::blue(const std::string& moduleName, const std::string& message)
-{
-    writeLine(moduleName, message, Color::Blue);
 }
 
 void ShineLog::ensureLogFile()
@@ -60,7 +72,6 @@ void ShineLog::ensureLogFile()
             << "        .black { color: black; }\n"
             << "        .green { color: green; }\n"
             << "        .red { color: red; }\n"
-            << "        .blue { color: blue; }\n"
             << "    </style>\n"
             << "</head>\n"
             << "<body>\n"
@@ -96,8 +107,6 @@ std::string ShineLog::colorName(Color color)
         return "green";
     case Color::Red:
         return "red";
-    case Color::Blue:
-        return "blue";
     }
 
     return "black";
@@ -126,21 +135,21 @@ std::string ShineLog::logFilePath()
     std::vector<char> buffer(MAX_PATH);
     const DWORD size = GetModuleFileNameA(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
     if (size > 0) {
-        return (std::filesystem::path(buffer.data()).parent_path() / "Log.html").string();
+        return logPathBesideExecutable(std::string(buffer.data(), size));
     }
 #elif defined(__APPLE__)
     uint32_t size = 0;
     _NSGetExecutablePath(nullptr, &size);
     std::vector<char> buffer(size);
     if (_NSGetExecutablePath(buffer.data(), &size) == 0) {
-        return (std::filesystem::weakly_canonical(std::filesystem::path(buffer.data())).parent_path() / "Log.html").string();
+        return logPathBesideExecutable(buffer.data());
     }
 #else
     std::vector<char> buffer(4096);
     const ssize_t size = readlink("/proc/self/exe", buffer.data(), buffer.size() - 1);
     if (size > 0) {
         buffer[static_cast<std::size_t>(size)] = '\0';
-        return (std::filesystem::path(buffer.data()).parent_path() / "Log.html").string();
+        return logPathBesideExecutable(buffer.data());
     }
 #endif
 

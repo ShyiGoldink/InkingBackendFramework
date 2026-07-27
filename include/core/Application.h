@@ -1,7 +1,8 @@
 #ifndef INKING_BACKEND_FRAMEWORK_CORE_APPLICATION_H
 #define INKING_BACKEND_FRAMEWORK_CORE_APPLICATION_H
 
-#include "Basic/ShineBasicModule.h"
+#include "basic/ShineBasicModule.h"
+#include "ui/UiThread.h"
 
 /**Application是后端程序的入口 */
 class Application : public ShineBasicModule
@@ -16,11 +17,11 @@ public:
 
 private:
     /**
-     * @brief 初始化前的问候阶段。
-     *
-     * 成功输出问候语后，会向日志写入“玘小姐已上线”。
+     * @brief 启动前的基础提示阶段。
      */
-    void sayHello();
+    void showStartupMessage();
+
+    UiThread _uiThread;
 };
 
 #endif // INKING_BACKEND_FRAMEWORK_CORE_APPLICATION_H

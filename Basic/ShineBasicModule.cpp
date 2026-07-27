@@ -5,34 +5,85 @@ ShineBasicModule::ShineBasicModule() = default;
 
 ShineBasicModule::~ShineBasicModule() = default;
 
-void ShineBasicModule::addStage(const std::string& stageName, const std::string& description)
-{
-    Stage stage;
-    stage.name = stageName;
-    stage.description = description;
-
-    _stage[stageName] = stage;
-}
-
-void ShineBasicModule::setStageStatus(const std::string& stageName, bool status, const std::string& message)
-{
-    auto iter = _stage.find(stageName);
-    if (iter == _stage.end()) {
-        ShineLog::error(moduleName(), "未注册的自检阶段: " + stageName);
+void ShineBasicModule::setStageStatus(int step, const std::string &name, bool statu, const std::string &message)
+{ // 首先找到stage
+    Stage *stage = findStage(step);
+    // 如果stage不存在，那么创建stage
+    if (stage == nullptr)
+    {
+        Stage newStage;
+        newStage.step = step;
+        newStage.name = name;
+        _stage.push_back(newStage);
+        stage = &_stage.back();
+    }
+    // 如果stage存在，并且name与当前修改的name不一致，那么写入错误日志并拒绝更新
+    else if (!stage->name.empty() && stage->name != name)
+    {
+        ShineLog::error(
+            moduleName(),
+            "自检阶段编号冲突: step " + std::to_string(step) + " 已注册为 " + stage->name + "，不能重新注册为 " + name);
         return;
     }
+    // 如果stage存在但是name为空，那么更新stage的name为当前修改的name
+    else if (stage->name.empty())
+    {
+        stage->name = name;
+    }
+    // 最后更新状态和消息
+    stage->status = statu;
+    stage->message = message;
 
-    iter->second.status = status;
-    iter->second.error = status ? "" : message;
-
-    const std::string logMessage = iter->second.name + " - " + message;
-    if (status) {
-        if (stageName == "SAY_HELLO") {
-            ShineLog::blue(moduleName(), logMessage);
-        } else {
-            ShineLog::pass(moduleName(), logMessage);
-        }
-    } else {
+    const std::string logMessage = stage->name + " - " + message;
+    // 根据状态写入日志
+    if (statu)
+    {
+        ShineLog::pass(moduleName(), logMessage);
+    }
+    else
+    {
         ShineLog::error(moduleName(), logMessage);
     }
+}
+
+void ShineBasicModule::setStageDetail(int step, const std::string &description, const std::string &suggestion)
+{ // 首先找到stage
+    Stage *stage = findStage(step);
+    // 如果stage不存在，那么创建stage
+    if (stage == nullptr)
+    {
+        Stage newStage;
+        newStage.step = step;
+        _stage.push_back(newStage);
+        stage = &_stage.back();
+    }
+    // 更新stage的描述和修改建议
+    stage->description = description;
+    stage->suggestion = suggestion;
+}
+
+Stage *ShineBasicModule::findStage(int step)
+{
+    for (auto &stage : _stage)
+    {
+        if (stage.step == step)
+        {
+            return &stage;
+        }
+    }
+
+    return nullptr;
+}
+
+const Stage *ShineBasicModule::findStage(int step) const
+{
+    for (const auto &stage : _stage)
+    {
+        if (stage.step == step)
+        {
+            return &stage;
+        }
+    }
+
+    return nullptr;
 }

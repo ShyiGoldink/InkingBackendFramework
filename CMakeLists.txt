@@ -31,8 +31,11 @@ add_executable(
 	InkingBackendFramework
 	src/main.cpp
 	src/core/Application.cpp
-	Basic/ShineBasicModule.cpp
-	Basic/ShineLog.cpp
+	src/command/CommandCenter.cpp
+	src/tool/FuzzyMatcher.cpp
+	src/ui/UiThread.cpp
+	basic/ShineBasicModule.cpp
+	basic/ShineLog.cpp
 )
 
 target_include_directories(
