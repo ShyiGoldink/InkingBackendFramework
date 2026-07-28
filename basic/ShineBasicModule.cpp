@@ -1,9 +1,15 @@
+#include "ShineStatusChecker.h"
 #include "ShineBasicModule.h"
 #include "ShineLog.h"
 
 ShineBasicModule::ShineBasicModule() = default;
 
 ShineBasicModule::~ShineBasicModule() = default;
+
+const std::vector<Stage> &ShineBasicModule::getStage() const
+{
+    return _stage;
+}
 
 void ShineBasicModule::setStageStatus(int step, const std::string &name, bool statu, const std::string &message)
 { // 首先找到stage

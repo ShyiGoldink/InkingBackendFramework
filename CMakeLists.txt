@@ -36,6 +36,7 @@ add_executable(
 	src/ui/UiThread.cpp
 	basic/ShineBasicModule.cpp
 	basic/ShineLog.cpp
+	basic/ShineStatusChecker.cpp
 )
 
 target_include_directories(

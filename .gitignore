@@ -1,11 +1,10 @@
 # Build outputs
-build/
+/build/
 out/
 cmake-build-*/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
-compile_commands.json
 
 # Binaries
 *.exe
@@ -21,7 +20,7 @@ compile_commands.json
 
 # IDE files
 .vs/
-.vscode/
+/.vscode/
 .idea/
 *.sln
 *.vcxproj
@@ -42,3 +41,7 @@ Thumbs.db
 .env
 .env.*
 local.*
+
+# Root-level generated symlinks
+# Git ignore patterns cannot detect "all symlinks" by file type, so list known generated links here.
+/compile_commands.json

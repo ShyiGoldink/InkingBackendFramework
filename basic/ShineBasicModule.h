@@ -3,6 +3,8 @@
 
 #include <string>
 #include <vector>
+#include <optional>
+#include "StatusRegisterToken.h"
 #include "dataStruct/StageStrcut.h"
 
 /**
@@ -20,10 +22,12 @@ public:
     // 禁止拷贝构造和赋值操作
     ShineBasicModule(const ShineBasicModule &) = delete;
     ShineBasicModule &operator=(const ShineBasicModule &) = delete;
-    /**给外部提供一个接口用于获取到stage数据 */
-    Stage getStage();
 
+    /** 获取模块名称，用于日志输出和状态检查器注册。 */
     virtual std::string moduleName() const = 0;
+
+    /**给外部提供一个接口用于获取到stage数据 */
+    const std::vector<Stage> &getStage() const;
 
 protected:
     /**
@@ -50,12 +54,23 @@ protected:
      * @param suggestion 错误建议；阶段失败时可以展示给管理员。
      */
     void setStageDetail(int step, const std::string &description, const std::string &suggestion);
+    /**
+     * @brief 用于向Status Checker中注册指针，方便后续的UIManager获取到最新的stage数据
+     *
+     * 该方法应该在子类的构造函数的末尾进行调用，以表示注册完成
+     *
+     */
+    void registerToStatusChecker()
+    {
+        _statusRegisterToken.emplace(moduleName(), this);
+    };
 
 private:
     Stage *findStage(int step);
     const Stage *findStage(int step) const;
 
-    std::vector<Stage> _stage; /** 模块的自检阶段表，按第一次注册顺序保存 */
+    std::vector<Stage> _stage;                               /** 模块的自检阶段表，按第一次注册顺序保存 */
+    std::optional<StatusRegisterToken> _statusRegisterToken; /**延迟构造Token */
 };
 
 #endif // INKING_BACKEND_FRAMEWORK_BASIC_SHINE_BASIC_MODULE_H

@@ -5,8 +5,8 @@
 /**
  * @brief 自检阶段结构体。
  *
- * 该结构体用于在 ShineBasicModule 内部存储自检阶段的状态。
- * 外部模块不应直接使用该结构体，而应通过 ShineBasicModule 提供的 StageSnapshot 获取只读快照。
+ * 该结构体用于存储 ShineBasicModule 的自检阶段状态。
+ * 外部模块可通过 ShineBasicModule::getStage() 获取只读引用。
  */
 struct Stage
 {

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <optional>
 #include <vector>
 
 std::optional<std::string> FuzzyMatcher::bestMatch(

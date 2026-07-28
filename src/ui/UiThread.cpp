@@ -5,17 +5,18 @@
 
 namespace
 {
-constexpr int STAGE_REGISTER_COMMANDS = 1;
-constexpr int STAGE_START_LOOP = 2;
-constexpr int STAGE_READ_INPUT = 3;
-constexpr int STAGE_EXECUTE_COMMAND = 4;
-constexpr int STAGE_STOP_LOOP = 5;
+    constexpr int STAGE_REGISTER_COMMANDS = 1;
+    constexpr int STAGE_START_LOOP = 2;
+    constexpr int STAGE_READ_INPUT = 3;
+    constexpr int STAGE_EXECUTE_COMMAND = 4;
+    constexpr int STAGE_STOP_LOOP = 5;
 }
 
 UiThread::UiThread()
 {
     registerStages();
     registerCommands();
+    registerToStatusChecker();
 }
 
 UiThread::~UiThread() = default;
@@ -66,7 +67,7 @@ void UiThread::registerCommands()
 {
     _commandCenter.registerCommand({"help",
                                     {"-h", "--help", "?"},
-                                    "Show available commands",
+                                    "提供可供使用的命令列表",
                                     [this]()
                                     {
                                         _commandCenter.printHelp();
@@ -76,7 +77,7 @@ void UiThread::registerCommands()
 
     _commandCenter.registerCommand({"status",
                                     {"stat", "health"},
-                                    "Show console module status",
+                                    "显示控制台模块状态",
                                     [this]()
                                     {
                                         printStatus();
@@ -86,7 +87,7 @@ void UiThread::registerCommands()
 
     _commandCenter.registerCommand({"exit",
                                     {"quit", "bye", "q"},
-                                    "Exit console loop",
+                                    "结束控制台交互循环并退出程序",
                                     []()
                                     {
                                         std::cout << "控制台循环已停止." << std::endl;
