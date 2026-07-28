@@ -3,6 +3,7 @@
 
 #include "basic/ShineBasicModule.h"
 #include "command/CommandCenter.h"
+#include "tool/UIRegisterTool.h"
 
 /**
  * @brief 控制台交互模块。
@@ -10,11 +11,11 @@
  * 当前在主线程中运行交互循环，但保留 UiThread 命名，
  * 方便后续真正拆分线程或接入事件循环。
  */
-class UiThread : public ShineBasicModule
+class UIThread : public ShineBasicModule
 {
 public:
-    UiThread();
-    ~UiThread() override;
+    UIThread();
+    ~UIThread() override;
 
     std::string moduleName() const override;
 
@@ -27,9 +28,9 @@ private:
     void registerStages();
     void registerCommands();
     void printPrompt() const;
-    void printStatus() const;
 
     CommandCenter _commandCenter;
+    UIRegisterTool _uiRegisterTool;
     bool _running = false;
 };
 

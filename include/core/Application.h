@@ -2,7 +2,9 @@
 #define INKING_BACKEND_FRAMEWORK_CORE_APPLICATION_H
 
 #include "basic/ShineBasicModule.h"
-#include "ui/UiThread.h"
+#include "ui/UIThread.h"
+
+#include <thread>
 
 /**Application是后端程序的入口 */
 class Application : public ShineBasicModule
@@ -21,7 +23,8 @@ private:
      */
     void showStartupMessage();
 
-    UiThread _uiThread;
+    UIThread _uiThread;
+    std::thread _uiWorker;
 };
 
 #endif // INKING_BACKEND_FRAMEWORK_CORE_APPLICATION_H

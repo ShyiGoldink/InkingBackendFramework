@@ -1,4 +1,4 @@
-#include "ui/UiThread.h"
+#include "ui/UIThread.h"
 
 #include <iostream>
 #include <string>
@@ -12,21 +12,22 @@ namespace
     constexpr int STAGE_STOP_LOOP = 5;
 }
 
-UiThread::UiThread()
+UIThread::UIThread()
 {
+    _uiRegisterTool.init(_commandCenter);
     registerStages();
     registerCommands();
     registerToStatusChecker();
 }
 
-UiThread::~UiThread() = default;
+UIThread::~UIThread() = default;
 
-std::string UiThread::moduleName() const
+std::string UIThread::moduleName() const
 {
-    return "UiThread";
+    return "UIThread";
 }
 
-void UiThread::run()
+void UIThread::run()
 {
     setStageStatus(STAGE_START_LOOP, "START_LOOP", true, "控制台交互已启动");
     _running = true;
@@ -54,7 +55,7 @@ void UiThread::run()
     setStageStatus(STAGE_STOP_LOOP, "STOP_LOOP", true, "控制台交互已结束");
 }
 
-void UiThread::registerStages()
+void UIThread::registerStages()
 {
     setStageDetail(STAGE_REGISTER_COMMANDS, "注册控制台命令", "如果命令不可用，请检查命令注册流程。");
     setStageDetail(STAGE_START_LOOP, "启动控制台交互循环", "如果启动失败，请检查控制台模块是否被正确调用。");
@@ -63,47 +64,13 @@ void UiThread::registerStages()
     setStageDetail(STAGE_STOP_LOOP, "停止控制台交互循环", "如果无法退出，请检查 exit 命令和循环状态。");
 }
 
-void UiThread::registerCommands()
+void UIThread::registerCommands()
 {
-    _commandCenter.registerCommand({"help",
-                                    {"-h", "--help", "?"},
-                                    "提供可供使用的命令列表",
-                                    [this]()
-                                    {
-                                        _commandCenter.printHelp();
-                                        return CommandResult::Continue;
-                                    },
-                                    false});
-
-    _commandCenter.registerCommand({"status",
-                                    {"stat", "health"},
-                                    "显示控制台模块状态",
-                                    [this]()
-                                    {
-                                        printStatus();
-                                        return CommandResult::Continue;
-                                    },
-                                    false});
-
-    _commandCenter.registerCommand({"exit",
-                                    {"quit", "bye", "q"},
-                                    "结束控制台交互循环并退出程序",
-                                    []()
-                                    {
-                                        std::cout << "控制台循环已停止." << std::endl;
-                                        return CommandResult::Quit;
-                                    },
-                                    false});
-
-    setStageStatus(STAGE_REGISTER_COMMANDS, "REGISTER_COMMANDS", true, "控制台命令已注册");
+    if (_uiRegisterTool.registerBasicCommand())
+        setStageStatus(STAGE_REGISTER_COMMANDS, "REGISTER_COMMANDS", true, "控制台命令已注册");
 }
 
-void UiThread::printPrompt() const
+void UIThread::printPrompt() const
 {
-    std::cout << "Inking> ";
-}
-
-void UiThread::printStatus() const
-{
-    std::cout << "控制台模块正在正常运行." << std::endl;
+    std::cout << "\033[33mInking> \033[0m";
 }

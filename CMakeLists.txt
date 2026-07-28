@@ -32,8 +32,11 @@ add_executable(
 	src/main.cpp
 	src/core/Application.cpp
 	src/command/CommandCenter.cpp
-	src/tool/FuzzyMatcher.cpp
-	src/ui/UiThread.cpp
+	src/command/CommandExecutor.cpp
+	src/command/CommandRegistrant.cpp
+	src/tool/FuzzyMatchTool.cpp
+	src/tool/UIRegisterTool.cpp
+	src/ui/UIThread.cpp
 	basic/ShineBasicModule.cpp
 	basic/ShineLog.cpp
 	basic/ShineStatusChecker.cpp

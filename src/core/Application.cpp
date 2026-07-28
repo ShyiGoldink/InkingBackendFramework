@@ -1,5 +1,5 @@
 #include "core/Application.h"
-#include <thread>
+
 #include <iostream>
 
 namespace
@@ -22,11 +22,14 @@ std::string Application::moduleName() const
 void Application::run()
 {
     showStartupMessage();
-    // 在另一个线程中运行ui，以避免主线程阻塞UI线程
-    // 注意，之后要结束程序的函数时，需要确保UI线程已经结束，否则可能会出现未定义行为
-    std::thread([this]()
-                { _uiThread.run(); })
-        .detach();
+    // UI loop runs in its own worker, while the main thread waits for it to finish.
+    _uiWorker = std::thread([this]()
+                            { _uiThread.run(); });
+
+    if (_uiWorker.joinable())
+    {
+        _uiWorker.join();
+    }
 }
 
 void Application::showStartupMessage()

@@ -29,3 +29,18 @@
 	两个问题：
 	为什么const ClassName* className和ClassName* className不一样？
 	为什么要用单例模式包装静态类？是因为这个类可能会需要生成普通对象？还是这两种都只是单例模式的实现方式？
+
+	中午实现了RAII思想的token类，基类到这里应该就已经实现了。现在开始拆解UiThread，将向command中注册信息拆分成一个小工具。
+	Tool类中的类，需要以“xx者”来命名。比如说，模糊匹配FuzzyMatcher，在英语中就是以“er”结尾，这里的注册者是“-ran”结尾，就算这样后面也要添加一个er。
+	或者用“Tool”结尾也可以，似乎更直观。
+	好吧，最后决定用Tool结尾。
+	模糊匹配就是“FuzzyMatchTool”。
+
+	明天/有空调整一下UIRegisterTool的构造函数，直接实现构造，不要init；
+	同时调整一下UiThread的名字为UIThread，统一UI格式。
+	明天的正式任务：改造CommandCenter，将调用指令和注册指令等分开。
+
+	现在开始拆解CommandCenter，初步来看，我认为CommandCenter只能作为指令调用接口。
+	具体拆分如下：
+	指令注册处，相当于Data部分
+	指令注册调用的是CommandCenter的接口，但是在CommandCenter中实际通过注册器进行注册。

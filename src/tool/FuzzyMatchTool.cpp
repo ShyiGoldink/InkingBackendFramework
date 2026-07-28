@@ -1,11 +1,11 @@
-#include "tool/FuzzyMatcher.h"
+#include "tool/FuzzyMatchTool.h"
 
 #include <algorithm>
 #include <limits>
 #include <optional>
 #include <vector>
 
-std::optional<std::string> FuzzyMatcher::bestMatch(
+std::optional<std::string> FuzzyMatchTool::bestMatch(
     const std::string &input,
     const std::vector<std::string> &candidates,
     std::size_t maxDistance)
@@ -31,7 +31,7 @@ std::optional<std::string> FuzzyMatcher::bestMatch(
     return std::nullopt;
 }
 
-std::size_t FuzzyMatcher::editDistance(const std::string &left, const std::string &right)
+std::size_t FuzzyMatchTool::editDistance(const std::string &left, const std::string &right)
 {
     std::vector<std::size_t> previous(right.size() + 1);
     std::vector<std::size_t> current(right.size() + 1);
