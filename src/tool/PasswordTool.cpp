@@ -7,6 +7,7 @@
 
 namespace
 {
+    /**扩散输入bit，减少输入的微小变化影响 */
     uint64_t mix(uint64_t value)
     {
         value ^= value >> 30;
@@ -16,7 +17,7 @@ namespace
         value ^= value >> 31;
         return value;
     }
-
+    /** bit转换成string*/
     std::string toHex(uint64_t value)
     {
         std::ostringstream stream;
@@ -61,8 +62,7 @@ std::string PasswordTool::deriveHash(const std::string &password) const
     uint64_t stateA = 0x123456789abcdef0ULL;
     uint64_t stateB = 0xfedcba9876543210ULL;
 
-    const std::string data =
-        std::string(kSaltPart1) + password + std::string(kSaltPart2);
+    const std::string data = std::string(kSaltPart1) + password + std::string(kSaltPart2);
 
     for (int round = 0; round < 50000; ++round)
     {

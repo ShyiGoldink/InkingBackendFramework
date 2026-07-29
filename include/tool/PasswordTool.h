@@ -20,7 +20,9 @@ public:
 private:
     /**实际检验密码是否正确的方法*/
     bool verify(const std::string &password) const;
+    /**根据用户的输入派生内部校验hash */
     std::string deriveHash(const std::string &password) const;
+    /**逐位对比hash值，防止使用“==”导致提前退出的时间差 */
     bool fixedTimeEquals(const std::string &left, const std::string &right) const;
     static constexpr std::string_view kSaltPart1 = "shyi";                                /**salt 1 */
     static constexpr std::string_view kSaltPart2 = "qi";                                  /**salt 2 */

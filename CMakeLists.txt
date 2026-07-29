@@ -55,3 +55,107 @@ target_compile_features(
 	PRIVATE
 	cxx_std_20
 )
+#检查本地的MySQL环境
+#是否开启使用MySQL
+#如果你使用的不是MySQL这里的ON要改成OFF
+option(INKING_ENABLE_MYSQL "Enable MySQL database backend" ON)
+#如果开启使用MySQL，就要去找是否有本地合适的环境
+if(INKING_ENABLE_MYSQL)
+    # 根据平台设置不同的搜索路径
+    if(WIN32)
+        set(MYSQL_INCLUDE_HINTS
+            "C:/Program Files/MySQL/MySQL Server 8.4/include"
+            "C:/Program Files/MySQL/include"
+        )
+        set(MYSQL_LIBRARY_HINTS
+            "C:/Program Files/MySQL/MySQL Server 8.4/lib"
+            "C:/Program Files/MySQL/lib"
+        )
+    elseif(APPLE)
+        set(MYSQL_INCLUDE_HINTS
+            /opt/homebrew/include
+            /opt/homebrew/opt/mysql-client/include
+            /usr/local/include
+            /usr/local/opt/mysql-client/include
+            /usr/local/mysql/include
+        )
+        set(MYSQL_LIBRARY_HINTS
+            /opt/homebrew/lib
+            /opt/homebrew/opt/mysql-client/lib
+            /usr/local/lib
+            /usr/local/opt/mysql-client/lib
+            /usr/local/mysql/lib
+        )
+    else()  # Linux
+        set(MYSQL_INCLUDE_HINTS
+            /usr/include
+            /usr/local/include
+        )
+        set(MYSQL_LIBRARY_HINTS
+            /usr/lib
+            /usr/local/lib
+            /usr/lib/x86_64-linux-gnu
+            /usr/local/lib/x86_64-linux-gnu
+        )
+    endif()
+
+    # 加载用户自定义路径（如果存在）
+    set(INKING_USER_PATHS_FILE
+        "${CMAKE_CURRENT_SOURCE_DIR}/CMakeUserPaths.cmake"
+        CACHE FILEPATH "User local dependency path overrides"
+    )
+    if(EXISTS "${INKING_USER_PATHS_FILE}")
+        include("${INKING_USER_PATHS_FILE}")
+    endif()
+
+    # 找include文件
+    find_path(MYSQL_INCLUDE_DIR
+        NAMES mysql/mysql.h
+        PATHS ${MYSQL_INCLUDE_HINTS}
+    )
+
+    # 找动态链接库
+    find_library(MYSQL_LIBRARY
+        NAMES mysqlclient libmysqlclient
+        PATHS ${MYSQL_LIBRARY_HINTS}
+    )
+
+    # 如果找不到，就要发送消息
+	if(NOT MYSQL_INCLUDE_DIR OR NOT MYSQL_LIBRARY)
+		message(FATAL_ERROR
+			"MySQL client library not found.\n"
+            "Recommended version: MySQL 8.4 LTS.\n"
+            "Minimum supported version: MySQL 8.0.\n"
+            "Please install MySQL 8.4 LTS client development files.\n"
+            "If you do not need MySQL, configure with:\n"
+            "  cmake -S . -B build -DINKING_ENABLE_MYSQL=OFF\n"
+            "Or create CMakeUserPaths.cmake next to CMakeLists.txt:\n"
+            "  list(APPEND MYSQL_INCLUDE_HINTS /path/to/mysql/include)\n"
+            "  list(APPEND MYSQL_LIBRARY_HINTS /path/to/mysql/lib)\n"
+            "See README to learn more.\n"
+			"没有MySQL环境,但是你在CMake中要求了它。\n"
+			"如果你已经安装环境或者不打算使用MySQL,请阅读README并按照中的方法进行调试。"
+		)
+	endif()
+
+    target_include_directories(
+        InkingBackendFramework
+        PRIVATE
+        ${MYSQL_INCLUDE_DIR}
+    )
+
+    target_link_libraries(
+        InkingBackendFramework
+        PRIVATE
+        ${MYSQL_LIBRARY}
+    )
+
+    target_compile_definitions(
+        InkingBackendFramework
+        PRIVATE
+        INKING_ENABLE_MYSQL
+    )
+
+    message(STATUS "MySQL include dir: ${MYSQL_INCLUDE_DIR}")
+    message(STATUS "MySQL library: ${MYSQL_LIBRARY}")
+endif()
