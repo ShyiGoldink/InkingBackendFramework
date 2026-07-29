@@ -21,7 +21,7 @@ Notes:
 
 ## About Database
 
-MySQL support is enabled by default. CMake will try to find the MySQL client headers and library from common system paths.
+MySQL support is enabled by default. CMake will try to find the official MySQL C API client through `mysql_config`, then find the MySQL client headers and library from common system paths.
 
 If you do not need MySQL, disable it when configuring the project:
 
@@ -35,6 +35,7 @@ This file is ignored by Git and is only used for your local machine.
 Example:
 
 ```cmake
+list(APPEND MYSQL_CONFIG_HINTS "/your/mysql/bin")
 list(APPEND MYSQL_INCLUDE_HINTS "/your/mysql/include")
 list(APPEND MYSQL_LIBRARY_HINTS "/your/mysql/lib")
 ```

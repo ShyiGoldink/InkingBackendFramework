@@ -63,6 +63,7 @@ option(INKING_ENABLE_MYSQL "Enable MySQL database backend" ON)
 if(INKING_ENABLE_MYSQL)
     # 根据平台设置不同的搜索路径
     if(WIN32)
+        set(MYSQL_CONFIG_HINTS)
         set(MYSQL_INCLUDE_HINTS
             "C:/Program Files/MySQL/MySQL Server 8.4/include"
             "C:/Program Files/MySQL/include"
@@ -72,6 +73,13 @@ if(INKING_ENABLE_MYSQL)
             "C:/Program Files/MySQL/lib"
         )
     elseif(APPLE)
+        set(MYSQL_CONFIG_HINTS
+            /opt/homebrew/bin
+            /opt/homebrew/opt/mysql-client/bin
+            /usr/local/bin
+            /usr/local/opt/mysql-client/bin
+            /usr/local/mysql/bin
+        )
         set(MYSQL_INCLUDE_HINTS
             /opt/homebrew/include
             /opt/homebrew/opt/mysql-client/include
@@ -87,6 +95,11 @@ if(INKING_ENABLE_MYSQL)
             /usr/local/mysql/lib
         )
     else()  # Linux
+        set(MYSQL_CONFIG_HINTS
+            /usr/bin
+            /usr/local/bin
+            /usr/local/mysql/bin
+        )
         set(MYSQL_INCLUDE_HINTS
             /usr/include
             /usr/local/include
@@ -108,9 +121,42 @@ if(INKING_ENABLE_MYSQL)
         include("${INKING_USER_PATHS_FILE}")
     endif()
 
+    # 优先使用MySQL官方提供的mysql_config获取编译和链接信息
+    find_program(MYSQL_CONFIG_EXECUTABLE
+        NAMES mysql_config
+        PATHS ${MYSQL_CONFIG_HINTS}
+    )
+
+    if(MYSQL_CONFIG_EXECUTABLE)
+        execute_process(
+            COMMAND ${MYSQL_CONFIG_EXECUTABLE} --include
+            OUTPUT_VARIABLE MYSQL_CONFIG_INCLUDE_FLAGS
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+        execute_process(
+            COMMAND ${MYSQL_CONFIG_EXECUTABLE} --libs
+            OUTPUT_VARIABLE MYSQL_CONFIG_LIBRARY_FLAGS
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+
+        separate_arguments(MYSQL_CONFIG_INCLUDE_ARGS UNIX_COMMAND "${MYSQL_CONFIG_INCLUDE_FLAGS}")
+        foreach(MYSQL_INCLUDE_ARG ${MYSQL_CONFIG_INCLUDE_ARGS})
+            if(MYSQL_INCLUDE_ARG MATCHES "^-I(.+)")
+                list(APPEND MYSQL_INCLUDE_HINTS "${CMAKE_MATCH_1}")
+            endif()
+        endforeach()
+
+        separate_arguments(MYSQL_CONFIG_LIBRARY_ARGS UNIX_COMMAND "${MYSQL_CONFIG_LIBRARY_FLAGS}")
+        foreach(MYSQL_LIBRARY_ARG ${MYSQL_CONFIG_LIBRARY_ARGS})
+            if(MYSQL_LIBRARY_ARG MATCHES "^-L(.+)")
+                list(APPEND MYSQL_LIBRARY_HINTS "${CMAKE_MATCH_1}")
+            endif()
+        endforeach()
+    endif()
+
     # 找include文件
     find_path(MYSQL_INCLUDE_DIR
-        NAMES mysql/mysql.h
+        NAMES mysql.h mysql/mysql.h
         PATHS ${MYSQL_INCLUDE_HINTS}
     )
 
@@ -127,9 +173,11 @@ if(INKING_ENABLE_MYSQL)
             "Recommended version: MySQL 8.4 LTS.\n"
             "Minimum supported version: MySQL 8.0.\n"
             "Please install MySQL 8.4 LTS client development files.\n"
+            "CMake will prefer the official mysql_config tool when it is available.\n"
             "If you do not need MySQL, configure with:\n"
             "  cmake -S . -B build -DINKING_ENABLE_MYSQL=OFF\n"
             "Or create CMakeUserPaths.cmake next to CMakeLists.txt:\n"
+            "  list(APPEND MYSQL_CONFIG_HINTS /path/to/mysql/bin)\n"
             "  list(APPEND MYSQL_INCLUDE_HINTS /path/to/mysql/include)\n"
             "  list(APPEND MYSQL_LIBRARY_HINTS /path/to/mysql/lib)\n"
             "See README to learn more.\n"
@@ -144,11 +192,19 @@ if(INKING_ENABLE_MYSQL)
         ${MYSQL_INCLUDE_DIR}
     )
 
-    target_link_libraries(
-        InkingBackendFramework
-        PRIVATE
-        ${MYSQL_LIBRARY}
-    )
+    if(MYSQL_CONFIG_EXECUTABLE)
+        target_link_libraries(
+            InkingBackendFramework
+            PRIVATE
+            ${MYSQL_CONFIG_LIBRARY_ARGS}
+        )
+    else()
+        target_link_libraries(
+            InkingBackendFramework
+            PRIVATE
+            ${MYSQL_LIBRARY}
+        )
+    endif()
 
     target_compile_definitions(
         InkingBackendFramework
@@ -156,6 +212,9 @@ if(INKING_ENABLE_MYSQL)
         INKING_ENABLE_MYSQL
     )
 
+    if(MYSQL_CONFIG_EXECUTABLE)
+        message(STATUS "MySQL config: ${MYSQL_CONFIG_EXECUTABLE}")
+    endif()
     message(STATUS "MySQL include dir: ${MYSQL_INCLUDE_DIR}")
     message(STATUS "MySQL library: ${MYSQL_LIBRARY}")
 endif()
