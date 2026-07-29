@@ -1,4 +1,5 @@
 #include "core/Application.h"
+#include "tool/PasswordTool.h"
 
 #include <iostream>
 
@@ -23,6 +24,9 @@ void Application::run()
 {
     showStartupMessage();
     // UI loop runs in its own worker, while the main thread waits for it to finish.
+    PasswordTool passwordTool;
+    if (!passwordTool.verifyConsole())
+        return;
     _uiWorker = std::thread([this]()
                             { _uiThread.run(); });
 

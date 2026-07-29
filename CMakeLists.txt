@@ -36,6 +36,7 @@ add_executable(
 	src/command/CommandRegistrant.cpp
 	src/tool/FuzzyMatchTool.cpp
 	src/tool/UIRegisterTool.cpp
+	src/tool/PasswordTool.cpp
 	src/ui/UIThread.cpp
 	basic/ShineBasicModule.cpp
 	basic/ShineLog.cpp
