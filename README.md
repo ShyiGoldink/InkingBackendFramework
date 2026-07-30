@@ -47,3 +47,9 @@ cmake -S . -B build \
   -DMYSQL_INCLUDE_DIR=/your/mysql/include \
   -DMYSQL_LIBRARY=/your/mysql/lib/libmysqlclient.dylib
 ```
+
+## Json
+
+This project vendors nlohmann/json under the MIT License.
+See `third_party/nlohmann_json/LICENSE.MIT`.
+Use config/databaseConfig.example.json to achieve your own databaseConfig.json to set your database config.Uh,some words waste your time,sorry.

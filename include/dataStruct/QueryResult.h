@@ -15,11 +15,12 @@ struct Row
  */
 struct QueryResult
 {
-    bool success = false;
-    std::string errorMessage;
-    int affectedRows = 0;
-    std::vector<Row> rows;
+    bool success = false;     /**query内容是否成功 */
+    std::string errorMessage; /**提示错误信息 */
+    int affectedRows = 0;     /**影响的行 */
+    std::vector<Row> rows;    /**实际数据 */
 
+    /**给出内容 */
     std::string toString() const
     {
         if (!success)
@@ -84,7 +85,7 @@ struct QueryResult
 
         return result;
     }
-
+    // 快捷打印
     void printResult(std::ostream &out = std::cout) const
     {
         if (!success)

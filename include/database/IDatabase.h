@@ -16,10 +16,11 @@ public:
      * @param port 数据库端口
      * @param userName 用户名
      * @param password 数据库密码
+     * @param databaseName 数据库名
      */
-    virtual bool connect(const std::string &host, int port, const std::string &userName, const std::string &password) = 0;
-    /** 用于没有返回数据的指令*/
-    virtual bool execute(const std::string &sql) = 0;
+    virtual bool connect(const std::string &host, int port, const std::string &userName, const std::string &password, const std::string &databaseName) = 0;
+    /**增删改数据*/
+    virtual QueryResult execute(const std::string &sql) = 0;
     /**查数据 */
     virtual QueryResult query(const std::string &sql) = 0;
     /**断开链接 */

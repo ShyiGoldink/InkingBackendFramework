@@ -37,15 +37,17 @@ add_executable(
 	src/tool/FuzzyMatchTool.cpp
 	src/tool/UIRegisterTool.cpp
 	src/tool/PasswordTool.cpp
+	src/tool/JsonTool.cpp
 	src/ui/UIThread.cpp
 	basic/ShineBasicModule.cpp
 	basic/ShineLog.cpp
 	basic/ShineStatusChecker.cpp
 )
-
+#include目录
 target_include_directories(
 	InkingBackendFramework
 	PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann_json/include
 	${CMAKE_CURRENT_SOURCE_DIR}
 	${CMAKE_CURRENT_SOURCE_DIR}/include
 )

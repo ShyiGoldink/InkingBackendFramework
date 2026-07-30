@@ -91,3 +91,7 @@
 	可以先这样做，等之后实际实现的时候，可以考虑一下能不能功能细化。
 	之后注册指令可以这样注册：database（别名 db，data，sql）[](){DatabaseManager::Instance()->queryConsole();};
 	好了，今天就到这里了。完善了IDatabase的设计，并且实现了QueryResult的设计。
+
+2026.7.30
+	得益于nlohmann/json开发者的慷慨，我可以没有任何心理负担地直接在我的项目中引入对方的库。
+	要做的仅仅只有配置Cmake（这是我本来就要做的）以及在readme中做声明和保留对方的LICENSE即可。
