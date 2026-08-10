@@ -29,7 +29,7 @@ If you do not need MySQL, disable it when configuring the project:
 cmake -S . -B build -DINKING_ENABLE_MYSQL=OFF
 ```
 
-If MySQL is installed in a custom location, create a local file named `CMakeUserPaths.cmake` next to `CMakeLists.txt`.
+If MySQL is installed in a custom location, create a local file named `cmake/CMakeUserPaths.cmake`.
 This file is ignored by Git and is only used for your local machine.
 
 Example:
@@ -52,4 +52,4 @@ cmake -S . -B build \
 
 This project vendors nlohmann/json under the MIT License.
 See `third_party/nlohmann_json/LICENSE.MIT`.
-Use config/databaseConfig.example.json to achieve your own databaseConfig.json to set your database config.Uh,some words waste your time,sorry.
+The default database config is `config/databaseConfig.json`. During the first build, CMake copies it to `build/bin/config/databaseConfig.json`.

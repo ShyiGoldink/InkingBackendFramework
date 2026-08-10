@@ -5,6 +5,24 @@
 #include <string>
 #include <vector>
 
+/**
+ * @brief
+ *数据库的配置信息
+ * @param host 数据库的服务器地址(在哪一台机器上)
+ * @param port 数据库端口
+ * @param userName 用户名
+ * @param password 数据库密码
+ * @param databaseName 数据库名
+ */
+struct DatabaseConfig
+{
+    std::string host;
+    int port;
+    std::string userName;
+    std::string password;
+    std::string databaseName;
+};
+
 struct Row
 {
     std::vector<std::string> columns;
@@ -12,13 +30,17 @@ struct Row
 /**
  * @brief
  * 数据库返回的数据结构，有快捷打印功能，也可以直接拿到string
+ * @param success query内容是否成功
+ * @param errorMessage 提示错误信息
+ * @param affectedRows 影响的行数据
+ * @param rows 实际数据
  */
 struct QueryResult
 {
-    bool success = false;     /**query内容是否成功 */
-    std::string errorMessage; /**提示错误信息 */
-    int affectedRows = 0;     /**影响的行 */
-    std::vector<Row> rows;    /**实际数据 */
+    bool success = false;
+    std::string errorMessage;
+    int affectedRows = 0;
+    std::vector<Row> rows;
 
     /**给出内容 */
     std::string toString() const

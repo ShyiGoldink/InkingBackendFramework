@@ -5,6 +5,16 @@
 void CommandRegistrant::registerCommand(Command command)
 { // 先获取当前vector已有的size，用于添加新的命令
     const std::size_t index = _commands.size();
+    // 防止重复注册以及空名注册
+    if (command.name.empty() || _index.find(command.name) != _index.end())
+    {
+        return;
+    }
+    // 如果命令为空也要避免注册
+    if (command.action == nullptr)
+    {
+        return;
+    }
     // 先注册正式的名称
     _index[command.name] = index;
     // 再将别名注册

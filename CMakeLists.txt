@@ -38,6 +38,7 @@ add_executable(
 	src/tool/UIRegisterTool.cpp
 	src/tool/PasswordTool.cpp
 	src/tool/JsonTool.cpp
+    src/tool/PathFindTool.cpp
 	src/ui/UIThread.cpp
 	basic/ShineBasicModule.cpp
 	basic/ShineLog.cpp
@@ -57,6 +58,17 @@ target_compile_features(
 	PRIVATE
 	cxx_std_20
 )
+
+# 构建完成后，首次复制默认配置到可执行文件同级目录
+add_custom_command(
+    TARGET InkingBackendFramework
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_CONFIG_DIR=${CMAKE_CURRENT_SOURCE_DIR}/config
+        -DTARGET_CONFIG_DIR=$<TARGET_FILE_DIR:InkingBackendFramework>/config
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CMakeConfigMove.cmake
+)
+
 #检查本地的MySQL环境
 #是否开启使用MySQL
 #如果你使用的不是MySQL这里的ON要改成OFF
@@ -116,11 +128,13 @@ if(INKING_ENABLE_MYSQL)
 
     # 加载用户自定义路径（如果存在）
     set(INKING_USER_PATHS_FILE
-        "${CMAKE_CURRENT_SOURCE_DIR}/CMakeUserPaths.cmake"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CMakeUserPaths.cmake"
         CACHE FILEPATH "User local dependency path overrides"
     )
     if(EXISTS "${INKING_USER_PATHS_FILE}")
         include("${INKING_USER_PATHS_FILE}")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/CMakeUserPaths.cmake")
+        include("${CMAKE_CURRENT_SOURCE_DIR}/CMakeUserPaths.cmake")
     endif()
 
     # 优先使用MySQL官方提供的mysql_config获取编译和链接信息
@@ -178,7 +192,7 @@ if(INKING_ENABLE_MYSQL)
             "CMake will prefer the official mysql_config tool when it is available.\n"
             "If you do not need MySQL, configure with:\n"
             "  cmake -S . -B build -DINKING_ENABLE_MYSQL=OFF\n"
-            "Or create CMakeUserPaths.cmake next to CMakeLists.txt:\n"
+            "Or create cmake/CMakeUserPaths.cmake:\n"
             "  list(APPEND MYSQL_CONFIG_HINTS /path/to/mysql/bin)\n"
             "  list(APPEND MYSQL_INCLUDE_HINTS /path/to/mysql/include)\n"
             "  list(APPEND MYSQL_LIBRARY_HINTS /path/to/mysql/lib)\n"
