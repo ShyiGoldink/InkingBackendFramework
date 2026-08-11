@@ -32,6 +32,7 @@ void DatabaseManager::initDatabase()
         config.userName,
         config.password,
         config.databaseName);
+    result.printResult();
     setStageStatus(STAGE_INIT_DATABASE, "初始化数据库", result.success, result.errorMessage);
 }
 

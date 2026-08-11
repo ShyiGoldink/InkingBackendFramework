@@ -5,21 +5,16 @@
 
 /**
  * @brief
- * 这里虽然不是静态类，但实际上就是一个command仓库
- * 这里会include所有要提供方法的类
- * 并且写好command，并提供接口让某个类获取到此类，来向commandcenter中注册
+ * 命令库。
+ *
+ * 负责把具体模块的 public 方法包装成 Command。
+ * 头文件只暴露命令获取接口，具体模块依赖放在 .cpp 中。
  */
 class CommandLibrary
 {
 public:
-    std::vector<Command> getCommands()
-    {
-        return commands;
-    }
-
-private:
-    std::vector<Command> commands = {
-        {}};
+    /**获取数据库相关命令 */
+    std::vector<Command> databaseCommands() const;
 };
 
 #endif // INKING_BACKEND_FRAMEWORK_COMMAND_LIBRARY_H

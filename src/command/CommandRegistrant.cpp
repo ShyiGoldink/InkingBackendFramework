@@ -19,7 +19,12 @@ void CommandRegistrant::registerCommand(Command command)
     _index[command.name] = index;
     // 再将别名注册
     for (const auto &alias : command.aliases)
-    {
+    {   
+        // 如果别名为空或者已经注册过了，就不注册
+        if (alias.empty() || _index.find(alias) != _index.end())
+        {
+            continue;
+        }
         _index[alias] = index;
     }
     // 最后将命令添加到vector之中
@@ -88,4 +93,15 @@ std::vector<std::string> CommandRegistrant::commandWords() const
     }
 
     return words;
+}
+
+// 快捷注册在指令库中的指令
+void CommandRegistrant::registerCommandsFromLibrary()
+{
+    CommandLibrary commandLibrary;
+    const auto commands = commandLibrary.databaseCommands();
+    for (const auto &command : commands)
+    {
+        registerCommand(command);
+    }
 }

@@ -2,7 +2,7 @@
 #define INKING_BACKEND_FRAMEWORK_COMMAND_REGISTRANT_H
 
 #include "dataStruct/CommandStruct.h"
-
+#include "command/CommandLibrary.h"
 #include <unordered_map>
 
 /**
@@ -26,6 +26,8 @@ public:
     void provideHelp() const;
     /**获取全部指令名 */
     std::vector<std::string> commandWords() const;
+    /**快捷注册在指令库中的指令*/
+    void registerCommandsFromLibrary();
 
 private:
     std::vector<Command> _commands;                      /**指令实际储存的容器 */

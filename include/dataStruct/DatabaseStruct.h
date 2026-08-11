@@ -118,6 +118,10 @@ struct QueryResult
             out << RED << toString() << RESET << '\n';
             return;
         }
+        else
+        {
+            out << "success!" << '\n';
+        }
 
         out << toString() << '\n';
     }

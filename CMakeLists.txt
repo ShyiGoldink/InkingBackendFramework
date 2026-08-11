@@ -33,7 +33,10 @@ add_executable(
 	src/core/Application.cpp
 	src/command/CommandCenter.cpp
 	src/command/CommandExecutor.cpp
+	src/command/CommandLibrary.cpp
 	src/command/CommandRegistrant.cpp
+    src/database/DatabaseManager.cpp
+    src/database/MySQL/MySQLDatabase.cpp
 	src/tool/FuzzyMatchTool.cpp
 	src/tool/UIRegisterTool.cpp
 	src/tool/PasswordTool.cpp
@@ -170,6 +173,30 @@ if(INKING_ENABLE_MYSQL)
         endforeach()
     endif()
 
+    # mysql_config 可能只返回 -lssl/-lcrypto。
+    # macOS 下这会让可执行文件记录裸库名，运行时可能找不到 OpenSSL 动态库。
+    find_library(INKING_OPENSSL_SSL_LIBRARY
+        NAMES ssl libssl
+        PATHS
+        /opt/homebrew/opt/openssl@3/lib
+        /opt/homebrew/lib
+        /usr/local/opt/openssl@3/lib
+        ${MYSQL_LIBRARY_HINTS}
+    )
+    find_library(INKING_OPENSSL_CRYPTO_LIBRARY
+        NAMES crypto libcrypto
+        PATHS
+        /opt/homebrew/opt/openssl@3/lib
+        /opt/homebrew/lib
+        /usr/local/opt/openssl@3/lib
+        ${MYSQL_LIBRARY_HINTS}
+    )
+
+    set(MYSQL_LINK_ARGS ${MYSQL_CONFIG_LIBRARY_ARGS})
+    if(INKING_OPENSSL_SSL_LIBRARY AND INKING_OPENSSL_CRYPTO_LIBRARY)
+        list(REMOVE_ITEM MYSQL_LINK_ARGS -lssl -lcrypto)
+    endif()
+
     # 找include文件
     find_path(MYSQL_INCLUDE_DIR
         NAMES mysql.h mysql/mysql.h
@@ -212,13 +239,50 @@ if(INKING_ENABLE_MYSQL)
         target_link_libraries(
             InkingBackendFramework
             PRIVATE
-            ${MYSQL_CONFIG_LIBRARY_ARGS}
+            ${MYSQL_LINK_ARGS}
         )
     else()
         target_link_libraries(
             InkingBackendFramework
             PRIVATE
             ${MYSQL_LIBRARY}
+        )
+    endif()
+    if(INKING_OPENSSL_SSL_LIBRARY AND INKING_OPENSSL_CRYPTO_LIBRARY)
+        target_link_libraries(
+            InkingBackendFramework
+            PRIVATE
+            ${INKING_OPENSSL_SSL_LIBRARY}
+            ${INKING_OPENSSL_CRYPTO_LIBRARY}
+        )
+    endif()
+
+    # macOS/Linux 运行时也需要知道动态库目录。
+    # -L 只解决链接时查找库，BUILD_RPATH 解决运行时查找 dylib/so。
+    set(MYSQL_RUNTIME_LIBRARY_DIRS)
+    if(MYSQL_LIBRARY)
+        get_filename_component(MYSQL_LIBRARY_DIR "${MYSQL_LIBRARY}" DIRECTORY)
+        list(APPEND MYSQL_RUNTIME_LIBRARY_DIRS "${MYSQL_LIBRARY_DIR}")
+    endif()
+    foreach(MYSQL_LIBRARY_ARG ${MYSQL_CONFIG_LIBRARY_ARGS})
+        if(MYSQL_LIBRARY_ARG MATCHES "^-L(.+)")
+            list(APPEND MYSQL_RUNTIME_LIBRARY_DIRS "${CMAKE_MATCH_1}")
+        endif()
+    endforeach()
+    if(INKING_OPENSSL_SSL_LIBRARY)
+        get_filename_component(INKING_OPENSSL_SSL_LIBRARY_DIR "${INKING_OPENSSL_SSL_LIBRARY}" DIRECTORY)
+        list(APPEND MYSQL_RUNTIME_LIBRARY_DIRS "${INKING_OPENSSL_SSL_LIBRARY_DIR}")
+    endif()
+    if(INKING_OPENSSL_CRYPTO_LIBRARY)
+        get_filename_component(INKING_OPENSSL_CRYPTO_LIBRARY_DIR "${INKING_OPENSSL_CRYPTO_LIBRARY}" DIRECTORY)
+        list(APPEND MYSQL_RUNTIME_LIBRARY_DIRS "${INKING_OPENSSL_CRYPTO_LIBRARY_DIR}")
+    endif()
+    if(MYSQL_RUNTIME_LIBRARY_DIRS)
+        list(REMOVE_DUPLICATES MYSQL_RUNTIME_LIBRARY_DIRS)
+        set_target_properties(
+            InkingBackendFramework
+            PROPERTIES
+            BUILD_RPATH "${MYSQL_RUNTIME_LIBRARY_DIRS}"
         )
     endif()
 

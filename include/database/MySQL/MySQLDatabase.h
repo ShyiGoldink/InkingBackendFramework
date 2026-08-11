@@ -2,7 +2,7 @@
 #define INKING_BACKEND_FRAMEWORK_MYSQL_DATABASE_H
 
 #include <mysql.h>
-#include "IDatabase.h"
+#include "database/IDatabase.h"
 /**
  * @brief
  * 这是一个MySQL的数据库实现类

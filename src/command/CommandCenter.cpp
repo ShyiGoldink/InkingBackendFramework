@@ -7,7 +7,7 @@
 CommandCenter::CommandCenter()
     : _commandExecutor(_commandRegistrant)
 {
-    ;
+    _commandRegistrant.registerCommandsFromLibrary();
 }
 
 void CommandCenter::registerCommand(Command command)
