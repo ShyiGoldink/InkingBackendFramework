@@ -28,7 +28,7 @@ public:
     {
         if (_module && !_moduleName.empty())
         {
-            ShineStatusChecker::executeCallbackPointer(_moduleName, _module);
+            ShineStatusChecker::discuteCallbackPointer(_moduleName, _module);
         }
     };
     // 禁止拷贝构造函数和拷贝函数
@@ -47,7 +47,7 @@ public:
         {
             if (_module && !_moduleName.empty())
             {
-                ShineStatusChecker::executeCallbackPointer(_moduleName, _module);
+                ShineStatusChecker::discuteCallbackPointer(_moduleName, _module);
             }
 
             _moduleName = std::move(other._moduleName);

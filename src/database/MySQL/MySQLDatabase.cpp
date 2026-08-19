@@ -32,7 +32,7 @@ QueryResult MySQLDatabase::execute(const std::string &sql)
 {
     if (!_conn)
     {
-        return {false, "Database connection is not established."};
+        return {false, "数据库尚未连接，请先连接"};
     }
 
     if (mysql_query(_conn, sql.c_str()))
@@ -41,15 +41,30 @@ QueryResult MySQLDatabase::execute(const std::string &sql)
         return {false, errorMessage};
     }
 
-    return {true, ""};
+
+    QueryResult queryResult;
+    queryResult.success = true;
+
+
+    my_ulonglong affected = mysql_affected_rows(_conn);
+
+    if(affected == (my_ulonglong)-1)
+    {
+        queryResult.success = false;
+        queryResult.errorMessage = mysql_error(_conn);
+    }
+    else{
+        queryResult.affectedRows = affected;
+    }
+    return queryResult;
 }
 
 // 数据库查询语句
 QueryResult MySQLDatabase::query(const std::string &sql)
 {
-    if (_conn)
+    if (!_conn)
     {
-        return {false, "数据库已经存在,请先断开连接再进行连接"};
+        return {false, "数据库尚未连接，请先连接"};
     }
 
     if (mysql_query(_conn, sql.c_str()))

@@ -22,7 +22,7 @@ public:
     /**在statusCheker中注册指针，用于后续调用 */
     static void registerCallbackPointer(const std::string &moduleName, ShineBasicModule *module);
     /**在statusCheker中注销指针 */
-    static void executeCallbackPointer(const std::string &moduleName, ShineBasicModule *module);
+    static void discuteCallbackPointer(const std::string &moduleName, ShineBasicModule *module);
     /**提供全部到key值，用于后续的UIManager获取到所有最新的指令 */
     static std::vector<std::string> getAllModuleNames();
     /**根据传入的string也就是key值，获取对应的module指针列表 */

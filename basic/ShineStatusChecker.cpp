@@ -19,7 +19,7 @@ void ShineStatusChecker::registerCallbackPointer(const std::string &moduleName, 
     }
 }
 // 注销指针
-void ShineStatusChecker::executeCallbackPointer(const std::string &moduleName, ShineBasicModule *module)
+void ShineStatusChecker::discuteCallbackPointer(const std::string &moduleName, ShineBasicModule *module)
 {
     if (module) // 鲁棒设计
     {

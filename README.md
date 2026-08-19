@@ -21,13 +21,9 @@ Notes:
 
 ## About Database
 
-MySQL support is enabled by default. CMake will try to find the official MySQL C API client through `mysql_config`, then find the MySQL client headers and library from common system paths.
+MySQL is currently the only built-in database backend, and its sources are always compiled. CMake will try to find the official MySQL C API client through `mysql_config`, then find the MySQL client headers and library from common system paths.
 
-If you do not need MySQL, disable it when configuring the project:
-
-```bash
-cmake -S . -B build -DINKING_ENABLE_MYSQL=OFF
-```
+> Note: `-DINKING_ENABLE_MYSQL=OFF` is reserved for future use and does not actually skip the MySQL backend yet. If you want to use another database, implement `IDatabase`, replace `MySQLDatabase` with your own class in `include/database/DatabaseManager.h`, and remove `src/database/MySQL/MySQLDatabase.cpp` from the sources in `CMakeLists.txt`.
 
 If MySQL is installed in a custom location, create a local file named `cmake/CMakeUserPaths.cmake`.
 This file is ignored by Git and is only used for your local machine.
