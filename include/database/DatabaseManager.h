@@ -8,6 +8,8 @@
 #include "basic/ShineBasicModule.h"
 #include "dataStruct/DatabaseStruct.h"
 
+inline constexpr const char* kDatabaseManagerModuleName = "DatabaseManager";
+
 /**
  * @brief
  * DatabaseManager是用于使用database的框架
@@ -29,7 +31,9 @@ public:
     DatabaseManager(DatabaseManager &&) = delete;
     DatabaseManager &operator=(DatabaseManager &&) = delete;
 
-    std::string moduleName() const override;
+    std::string moduleName() const override{
+        return kDatabaseManagerModuleName;
+    };
     /**初始化数据库，根据的是Json配置文件中的内容 */
     void initDatabase();
 

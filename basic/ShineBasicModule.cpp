@@ -2,6 +2,8 @@
 #include "ShineBasicModule.h"
 #include "ShineLog.h"
 
+#include<iostream>
+
 ShineBasicModule::ShineBasicModule() = default;
 
 ShineBasicModule::~ShineBasicModule() = default;
@@ -92,4 +94,9 @@ const Stage *ShineBasicModule::findStage(int step) const
     }
 
     return nullptr;
+}
+
+void ShineBasicModule::sayMyName() const
+{
+    std::cout<<"["<<moduleName()<<"@ 0x"<<std::hex<<(void*)this<<std::dec<<"]"<<std::endl;
 }

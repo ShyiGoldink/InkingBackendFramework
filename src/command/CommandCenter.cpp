@@ -6,7 +6,7 @@
 
 CommandCenter::CommandCenter()
     : _commandExecutor(_commandRegistrant)
-{
+{    registerToStatusChecker();
     _commandRegistrant.registerCommandsFromLibrary();
 }
 

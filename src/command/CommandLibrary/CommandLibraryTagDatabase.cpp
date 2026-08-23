@@ -9,9 +9,10 @@ std::vector<Command> CommandLibrary::databaseCommands() const
          {"db-init", "database-initialize", "initdatabase"},
          "初始化数据库",
          []()
-         {
+         {  DatabaseManager::instance().sayMyName();
              DatabaseManager::instance().initDatabase();
              return CommandResult::Continue;
          },
          false}};
 }
+

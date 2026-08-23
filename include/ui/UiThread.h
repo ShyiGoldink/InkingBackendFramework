@@ -3,7 +3,8 @@
 
 #include "basic/ShineBasicModule.h"
 #include "command/CommandCenter.h"
-#include "tool/UIRegisterTool.h"
+
+inline constexpr const char* kUIThreadModuleName = "UIThread";
 
 /**
  * @brief 控制台交互模块。
@@ -17,7 +18,9 @@ public:
     UIThread();
     ~UIThread() override;
 
-    std::string moduleName() const override;
+    std::string moduleName() const override{
+        return kUIThreadModuleName;
+    };
 
     /**
      * @brief 启动控制台交互循环。
@@ -26,11 +29,9 @@ public:
 
 private:
     void registerStages();
-    void registerCommands();
     void printPrompt() const;
 
     CommandCenter _commandCenter;
-    UIRegisterTool _uiRegisterTool;
     bool _running = false;
 };
 

@@ -6,6 +6,8 @@
 
 #include <thread>
 
+inline constexpr const char* kApplicationModuleName = "Application";
+
 /**Application是后端程序的入口 */
 class Application : public ShineBasicModule
 {
@@ -15,7 +17,9 @@ public:
     void run();
     ~Application() override;
 
-    std::string moduleName() const override;
+    std::string moduleName() const override{
+        return kApplicationModuleName;
+    };
 
 private:
     /**

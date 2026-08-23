@@ -5,27 +5,20 @@
 
 namespace
 {
-    constexpr int STAGE_REGISTER_COMMANDS = 1;
-    constexpr int STAGE_START_LOOP = 2;
-    constexpr int STAGE_READ_INPUT = 3;
-    constexpr int STAGE_EXECUTE_COMMAND = 4;
-    constexpr int STAGE_STOP_LOOP = 5;
+    constexpr int STAGE_START_LOOP = 1;
+    constexpr int STAGE_READ_INPUT = 2;
+    constexpr int STAGE_EXECUTE_COMMAND = 3;
+    constexpr int STAGE_STOP_LOOP = 4;
 }
 
 UIThread::UIThread()
 {
-    _uiRegisterTool.init(_commandCenter);
     registerStages();
-    registerCommands();
     registerToStatusChecker();
 }
 
 UIThread::~UIThread() = default;
 
-std::string UIThread::moduleName() const
-{
-    return "UIThread";
-}
 
 void UIThread::run()
 {
@@ -57,18 +50,12 @@ void UIThread::run()
 
 void UIThread::registerStages()
 {
-    setStageDetail(STAGE_REGISTER_COMMANDS, "注册控制台命令", "如果命令不可用，请检查命令注册流程。");
     setStageDetail(STAGE_START_LOOP, "启动控制台交互循环", "如果启动失败，请检查控制台模块是否被正确调用。");
     setStageDetail(STAGE_READ_INPUT, "读取管理员输入", "如果读取失败，请检查标准输入流是否已关闭。");
     setStageDetail(STAGE_EXECUTE_COMMAND, "执行控制台命令", "如果执行失败，请检查命令回调函数。");
     setStageDetail(STAGE_STOP_LOOP, "停止控制台交互循环", "如果无法退出，请检查 exit 命令和循环状态。");
 }
 
-void UIThread::registerCommands()
-{
-    if (_uiRegisterTool.registerBasicCommand())
-        setStageStatus(STAGE_REGISTER_COMMANDS, "REGISTER_COMMANDS", true, "控制台命令已注册");
-}
 
 void UIThread::printPrompt() const
 {

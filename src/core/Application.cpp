@@ -15,11 +15,6 @@ Application::Application()
 
 Application::~Application() = default;
 
-std::string Application::moduleName() const
-{
-    return "Application";
-}
-
 void Application::run()
 {
     showStartupMessage();

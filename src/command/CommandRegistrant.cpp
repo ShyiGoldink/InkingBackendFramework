@@ -99,9 +99,11 @@ std::vector<std::string> CommandRegistrant::commandWords() const
 void CommandRegistrant::registerCommandsFromLibrary()
 {
     CommandLibrary commandLibrary;
-    const auto commands = commandLibrary.databaseCommands();
-    for (const auto &command : commands)
+    std::vector<std::vector<Command>> commands = commandLibrary.commands();
+    for (const auto &tagCommand : commands)
     {
-        registerCommand(command);
+        for(const auto & command:tagCommand){
+             registerCommand(command);
+        }
     }
 }

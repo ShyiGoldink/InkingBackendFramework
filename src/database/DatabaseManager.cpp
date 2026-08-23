@@ -12,11 +12,6 @@ DatabaseManager::DatabaseManager()
     registerToStatusChecker();
 }
 
-std::string DatabaseManager::moduleName() const
-{
-    return "DatabaseManager";
-}
-
 void DatabaseManager::initDatabase()
 {
     DatabaseConfig config;

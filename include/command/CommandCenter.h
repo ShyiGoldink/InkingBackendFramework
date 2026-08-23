@@ -5,12 +5,16 @@
 #include "dataStruct/CommandStruct.h"
 #include "CommandRegistrant.h"
 #include "CommandExecutor.h"
+#include "basic/ShineBasicModule.h"
+
+inline constexpr const char* kCommandCenterModuleName = "CommandCenter";
+
 /**
  * @brief 注册式命令中心。
  *
  * 支持命令名、别名、帮助信息和未知命令的模糊提示。
  */
-class CommandCenter
+class CommandCenter: public ShineBasicModule
 {
 public:
     CommandCenter();
@@ -32,6 +36,10 @@ public:
      * @brief 打印命令帮助。
      */
     void printHelp() const;
+
+    std::string moduleName() const override{
+        return kCommandCenterModuleName;
+    }
 
 private:
     CommandRegistrant _commandRegistrant; /**数据和注册中心 */

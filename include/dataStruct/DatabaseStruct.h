@@ -39,7 +39,7 @@ struct QueryResult
 {
     bool success = false;
     std::string errorMessage;
-    int affectedRows = 0;
+    uint64_t affectedRows = 0;
     std::vector<Row> rows;
 
     /**给出内容 */

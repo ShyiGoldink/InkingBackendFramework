@@ -33,12 +33,13 @@ add_executable(
 	src/core/Application.cpp
 	src/command/CommandCenter.cpp
 	src/command/CommandExecutor.cpp
-	src/command/CommandLibrary.cpp
+	src/command/CommandLibrary/CommandLibrary.cpp
+    src/command/CommandLibrary/CommandLibraryTagDatabase.cpp
+    src/command/CommandLibrary/CommandLibraryTagUI.cpp
 	src/command/CommandRegistrant.cpp
     src/database/DatabaseManager.cpp
     src/database/MySQL/MySQLDatabase.cpp
 	src/tool/FuzzyMatchTool.cpp
-	src/tool/UIRegisterTool.cpp
 	src/tool/PasswordTool.cpp
 	src/tool/JsonTool.cpp
     src/tool/PathFindTool.cpp

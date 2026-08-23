@@ -29,6 +29,9 @@ public:
     /**给外部提供一个接口用于获取到stage数据 */
     const std::vector<Stage> &getStage() const;
 
+        /**为命令提供一个快捷的方法，用于快速输出对象信息 */
+    void sayMyName()  const;
+
 protected:
     /**
      * @brief 写入一个自检阶段的状态，并自动记录日志。
