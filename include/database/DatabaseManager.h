@@ -8,7 +8,7 @@
 #include "basic/ShineBasicModule.h"
 #include "dataStruct/DatabaseStruct.h"
 
-inline constexpr const char* kDatabaseManagerModuleName = "DatabaseManager";
+inline constexpr const char *kDatabaseManagerModuleName = "DatabaseManager";
 
 /**
  * @brief
@@ -31,19 +31,28 @@ public:
     DatabaseManager(DatabaseManager &&) = delete;
     DatabaseManager &operator=(DatabaseManager &&) = delete;
 
-    std::string moduleName() const override{
+    std::string moduleName() const override
+    {
         return kDatabaseManagerModuleName;
     };
     /**初始化数据库，根据的是Json配置文件中的内容 */
     void initDatabase();
+    /** 增删改数据库*/
+    void execute(const std::vector<std::string> &args);
+    /**查数据库 */
+    void query(const std::vector<std::string> &args);
+    /**断开连接 */
+    void disconnectDatabase();
 
 private:
     /**私有构造函数，禁止外部调用 */
     DatabaseManager();
     /**加载数据库配置 */
     bool loadDatabaseConfig(DatabaseConfig &config);
+    /** 辅助方法-将vector转换成string进行查询*/
+    std::string vTransTos(const std::vector<std::string> &);
 
-    MySQLDatabase _dp; /**数据库指针，可以根据具体实现的数据库文件更改*/
+    MySQLDatabase _dp; /**数据库对象，可以根据具体实现的数据库文件更改*/
 };
 
 #endif // INKING_BACKEND_FRAMEWORK_DATABASE_MANAGER_H

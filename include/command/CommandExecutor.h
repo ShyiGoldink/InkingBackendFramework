@@ -18,8 +18,8 @@ public:
 
 private:
     CommandRegistrant *_commandRegistrant = nullptr; /**从commandRegistrant处获数据 */
-    /**辅助方法-查找第一个单词 */
-    std::string firstWord(const std::string &input) const;
+                                                     /**辅助方法-指令token化*/
+    std::vector<std::string> tokenize(const std::string &input) const;
 };
 
 #endif // INKING_BACKEND_FRAMEWORK_COMMAND_EXECUTOR_H
