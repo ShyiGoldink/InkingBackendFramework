@@ -41,19 +41,18 @@ QueryResult MySQLDatabase::execute(const std::string &sql)
         return {false, errorMessage};
     }
 
-
     QueryResult queryResult;
     queryResult.success = true;
 
-
     my_ulonglong affected = mysql_affected_rows(_conn);
 
-    if(affected == (my_ulonglong)-1)
+    if (affected == (my_ulonglong)-1)
     {
         queryResult.success = false;
         queryResult.errorMessage = mysql_error(_conn);
     }
-    else{
+    else
+    {
         queryResult.affectedRows = affected;
     }
     return queryResult;
@@ -108,4 +107,9 @@ QueryResult MySQLDatabase::disconnect()
         _conn = nullptr;
     }
     return {true, ""};
+}
+
+MySQLDatabase::~MySQLDatabase()
+{
+    disconnect();
 }

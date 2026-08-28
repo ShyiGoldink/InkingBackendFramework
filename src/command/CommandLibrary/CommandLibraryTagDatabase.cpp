@@ -15,43 +15,43 @@ std::vector<Command> CommandLibrary::databaseCommands() const
              return CommandResult::Continue;
          },
          false},
-        {"execute",
-         {"database-execute", "db-execute"},
+        {"mysql-e",
+         {"mysql-execute", "mysqle"},
          "增/删/改数据库",
          [](const std::vector<std::string> &args)
          {
+             if (args.empty())
+             {
+                 std::cout << "用法: mysql-e <SQL 语句>\n";
+                 return CommandResult::Continue;
+             }
              DatabaseManager::instance().sayMyName();
-             DatabaseManager::instance().execute(args);
+             DatabaseManager::instance().execute(PoolType::MySQL, args);
              return CommandResult::Continue;
          },
          false},
-        {"query",
-         {"database-query", "db-query"},
+        {"mysql-q",
+         {"mysql-query", "mysqlq"},
          "查数据库",
          [](const std::vector<std::string> &args)
          {
+             if (args.empty())
+             {
+                 std::cout << "用法: mysql-q <SQL 语句>\n";
+                 return CommandResult::Continue;
+             }
              DatabaseManager::instance().sayMyName();
-             DatabaseManager::instance().query(args);
+             DatabaseManager::instance().query(PoolType::MySQL, args);
              return CommandResult::Continue;
          },
          false},
-        {"execute",
-         {"database -execute", "db -execute"},
-         "增/删/改数据库",
+        {"mysql-disconnect",
+         {"mysql-d", "mysqld"},
+         "断开MySQL的数据库连接",
          [](const std::vector<std::string> &args)
          {
              DatabaseManager::instance().sayMyName();
-             DatabaseManager::instance().query(args);
-             return CommandResult::Continue;
-         },
-         false},
-        {"disconnect",
-         {"database-disconnect", "db-disconnect"},
-         "增/删/改数据库",
-         [](const std::vector<std::string> &args)
-         {
-             DatabaseManager::instance().sayMyName();
-             DatabaseManager::instance().disconnectDatabase();
+             DatabaseManager::instance().disconnectDatabase(PoolType::MySQL);
              return CommandResult::Continue;
          },
          false}};

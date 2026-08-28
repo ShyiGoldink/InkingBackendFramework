@@ -38,6 +38,7 @@ add_executable(
     src/command/CommandLibrary/CommandLibraryTagUI.cpp
 	src/command/CommandRegistrant.cpp
     src/database/DatabaseManager.cpp
+    src/database/DatabasePool.cpp
     src/database/MySQL/MySQLDatabase.cpp
 	src/tool/FuzzyMatchTool.cpp
 	src/tool/PasswordTool.cpp

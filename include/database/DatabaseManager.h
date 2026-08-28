@@ -4,9 +4,11 @@
 // 这里是具体的类，之后用其它代替。
 // 我这里先用IDatabase代替，等之后开发好MySQL的基础功能之后再替换成MySQL
 // 用户有需要自己去替换成其他数据库，都可以，没什么关系。
-#include "MySQL/MySQLDatabase.h"
 #include "basic/ShineBasicModule.h"
 #include "dataStruct/DatabaseStruct.h"
+#include "database/DatabasePool.h"
+
+#include <memory>
 
 inline constexpr const char *kDatabaseManagerModuleName = "DatabaseManager";
 
@@ -38,11 +40,11 @@ public:
     /**初始化数据库，根据的是Json配置文件中的内容 */
     void initDatabase();
     /** 增删改数据库*/
-    void execute(const std::vector<std::string> &args);
+    void execute(PoolType poolType, const std::vector<std::string> &args);
     /**查数据库 */
-    void query(const std::vector<std::string> &args);
+    void query(PoolType poolType, const std::vector<std::string> &args);
     /**断开连接 */
-    void disconnectDatabase();
+    void disconnectDatabase(PoolType poolType);
 
 private:
     /**私有构造函数，禁止外部调用 */
@@ -51,8 +53,6 @@ private:
     bool loadDatabaseConfig(DatabaseConfig &config);
     /** 辅助方法-将vector转换成string进行查询*/
     std::string vTransTos(const std::vector<std::string> &);
-
-    MySQLDatabase _dp; /**数据库对象，可以根据具体实现的数据库文件更改*/
 };
 
 #endif // INKING_BACKEND_FRAMEWORK_DATABASE_MANAGER_H

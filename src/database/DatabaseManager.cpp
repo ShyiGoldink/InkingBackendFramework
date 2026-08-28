@@ -1,4 +1,5 @@
 #include "database/DatabaseManager.h"
+#include "database/IDatabase.h"
 #include "tool/JsonTool.h"
 #include "tool/PathFindTool.h"
 namespace
@@ -17,47 +18,84 @@ DatabaseManager::DatabaseManager()
 
 void DatabaseManager::initDatabase()
 {
+    // 获取数据库配置，这里就只加载MySQL，如有需要让用户自定义添加数据库配置
     DatabaseConfig config;
     if (!loadDatabaseConfig(config))
     {
         setStageStatus(STAGE_INIT_DATABASE, "初始化数据库", false, "加载数据库配置失败");
         return;
     }
-    // 连接数据库
-    QueryResult result = _dp.connect(
-        config.host,
-        config.port,
-        config.userName,
-        config.password,
-        config.databaseName);
-    result.printResult();
-    setStageStatus(STAGE_INIT_DATABASE, "初始化数据库", result.success, result.errorMessage);
+    // 初始化数据库
+    std::vector<QueryResult> results = DatabasePool::init(PoolType::MySQL, maxPoolNum, config);
+    // 池已存在时 init 不会重复创建连接，返回空结果，这里直接按成功处理
+    if (results.empty())
+    {
+        std::cout << "连接池已存在，无需重复初始化。" << std::endl;
+        setStageStatus(STAGE_INIT_DATABASE, "初始化数据库", true, "连接池已初始化");
+        return;
+    }
+    int total = 0;
+    int success = 0;
+    for (QueryResult &query : results)
+    {
+        total++;
+        query.printResult();
+        if (query.success)
+        {
+            success++;
+        }
+    }
+    // 计算成功率并给出结果
+    total = total == 0 ? 1 : total;
+    float rate = static_cast<float>(success) / total;
+    std::cout << "数据库初始化效果:" << rate << std::endl;
+    if (rate != 0)
+        setStageStatus(STAGE_INIT_DATABASE, "初始化数据库", true, "加载数据库配置成功");
+    else
+        setStageStatus(STAGE_INIT_DATABASE, "初始化数据库", false, "加载数据库配置失败");
 }
 
 // 增删改数据库
-void DatabaseManager::execute(const std::vector<std::string> &args)
+void DatabaseManager::execute(PoolType poolType, const std::vector<std::string> &args)
 {
+    DatabasePool databasePool(poolType);
     auto arg = vTransTos(args);
-    QueryResult result = _dp.execute(arg);
+    if (!databasePool.valid())
+    {
+        return;
+    }
+    QueryResult result = databasePool->execute(arg);
     result.printResult();
     setStageStatus(STAGE_EXECUTE_DATABASE, "增/删/改数据库", result.success, result.errorMessage);
 }
 
 // 查数据库
-void DatabaseManager::query(const std::vector<std::string> &args)
+void DatabaseManager::query(PoolType poolType, const std::vector<std::string> &args)
 {
+    DatabasePool databasePool(poolType);
     auto arg = vTransTos(args);
-    QueryResult result = _dp.query(arg);
+    if (!databasePool.valid())
+    {
+        return;
+    }
+    QueryResult result = databasePool->query(arg);
     result.printResult();
     setStageStatus(STAGE_QUERY_DATABASE, "查数据库", result.success, result.errorMessage);
 }
 
 // 断开数据库的连接
-void DatabaseManager::disconnectDatabase()
+void DatabaseManager::disconnectDatabase(PoolType poolType)
 {
-    QueryResult result = _dp.disconnect();
-    result.printResult();
-    setStageStatus(STAGE_DISCONNECT_DATABASE, "数据库断开连接", result.success, result.errorMessage);
+    std::vector<QueryResult> results = DatabasePool::free(poolType);
+    std::string errorMessages = "";
+    bool isSuccess = true;
+    for (QueryResult queryResult : results)
+    {
+        isSuccess = isSuccess && queryResult.success;
+        errorMessages = errorMessages + ";" + queryResult.errorMessage;
+        queryResult.printResult();
+    }
+    setStageStatus(STAGE_DISCONNECT_DATABASE, "数据库断开连接", isSuccess, errorMessages);
 }
 
 bool DatabaseManager::loadDatabaseConfig(DatabaseConfig &config)

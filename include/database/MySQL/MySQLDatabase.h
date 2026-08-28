@@ -11,6 +11,16 @@
 class MySQLDatabase : public IDatabase
 {
 public:
+    MySQLDatabase() = default;
+    ~MySQLDatabase() override;
+    // 禁用拷贝
+    MySQLDatabase(const MySQLDatabase &) = delete;
+    MySQLDatabase &operator=(const MySQLDatabase &) = delete;
+
+    // 禁用移动
+    MySQLDatabase(MySQLDatabase &&) = delete;
+    MySQLDatabase &operator=(MySQLDatabase &&) = delete;
+
     QueryResult connect(
         const std::string &host,
         int port,
