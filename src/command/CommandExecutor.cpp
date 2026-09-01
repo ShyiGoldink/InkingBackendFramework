@@ -3,6 +3,7 @@
 #include "command/CommandRegistrant.h"
 #include "command/CommandExecutor.h"
 #include "tool/FuzzyMatchTool.h"
+#include "ui/UIMessageLibrary.h"
 
 CommandExecutor::CommandExecutor(CommandRegistrant &commandRegistrant)
 {
@@ -28,15 +29,19 @@ CommandResult CommandExecutor::execute(const std::string &input) const
         return command->action(args);
     }
 
-    std::cout << "没有找到命令：" << commandName << std::endl;
+    const std::string notFoundText = "没有找到命令：" + commandName;
+    const char *notFoundMsg = notFoundText.c_str();
+    UIMessageLibrary::quickMessage(false, 0.0f, notFoundMsg);
 
     const auto suggestion = FuzzyMatchTool::bestMatch(commandName, _commandRegistrant->commandWords());
     if (suggestion.has_value())
     {
-        std::cout << "你是不是想输入：" << suggestion.value() << " ?" << std::endl;
+        const std::string suggestionText = "你是不是想输入：" + suggestion.value() + " ?";
+        UIMessageLibrary::addMessage(MessageType::normal, 0.0f, suggestionText);
     }
 
-    std::cout << "输入 help 查看可用命令。" << std::endl;
+    const auto helpMsg = "输入 help 查看可用命令。";
+    UIMessageLibrary::addMessage(MessageType::normal, 0.0f, helpMsg);
     return CommandResult::Continue;
 }
 

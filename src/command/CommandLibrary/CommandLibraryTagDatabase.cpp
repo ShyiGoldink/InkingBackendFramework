@@ -1,6 +1,7 @@
 #include "command/CommandLibrary.h"
 
 #include "database/DatabaseManager.h"
+#include "ui/UIMessageLibrary.h"
 
 std::vector<Command> CommandLibrary::databaseCommands() const
 {
@@ -22,7 +23,7 @@ std::vector<Command> CommandLibrary::databaseCommands() const
          {
              if (args.empty())
              {
-                 std::cout << "用法: mysql-e <SQL 语句>\n";
+                 UIMessageLibrary::addMessage(MessageType::normal, 0.0f, "用法: mysql-e <SQL 语句>");
                  return CommandResult::Continue;
              }
              DatabaseManager::instance().sayMyName();
@@ -37,7 +38,7 @@ std::vector<Command> CommandLibrary::databaseCommands() const
          {
              if (args.empty())
              {
-                 std::cout << "用法: mysql-q <SQL 语句>\n";
+                 UIMessageLibrary::addMessage(MessageType::normal, 0.0f, "用法: mysql-q <SQL 语句>");
                  return CommandResult::Continue;
              }
              DatabaseManager::instance().sayMyName();

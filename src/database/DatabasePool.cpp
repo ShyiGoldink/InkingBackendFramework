@@ -1,6 +1,9 @@
 #include "database/DatabasePool.h"
 #include "database/IDatabase.h"
+
+#ifdef INKING_ENABLE_MYSQL
 #include "database/MySQL/MySQLDatabase.h"
+#endif
 
 std::unordered_map<PoolType, std::vector<std::unique_ptr<IDatabase>>> DatabasePool::_pools;
 
@@ -52,7 +55,8 @@ std::vector<QueryResult> DatabasePool::init(PoolType poolType, int num, Database
         std::vector<std::unique_ptr<IDatabase>> databasePool;
         switch (poolType)
         {
-        // 先只完善MySQL的初始化，其它的按需补充
+            // 先只完善MySQL的初始化，其它的按需补充
+#ifdef INKING_ENABLE_MYSQL
         case PoolType::MySQL:
             for (int i = 0; i < num; i++)
             {
@@ -65,6 +69,7 @@ std::vector<QueryResult> DatabasePool::init(PoolType poolType, int num, Database
                 result.push_back(queryResult);
             }
             break;
+#endif
         default:
             break;
         }

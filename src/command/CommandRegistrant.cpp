@@ -1,5 +1,7 @@
 #include <iostream>
+#include <sstream>
 #include "command/CommandRegistrant.h"
+#include "ui/UIMessageLibrary.h"
 
 // 注册命令的函数
 void CommandRegistrant::registerCommand(Command command)
@@ -19,7 +21,7 @@ void CommandRegistrant::registerCommand(Command command)
     _index[command.name] = index;
     // 再将别名注册
     for (const auto &alias : command.aliases)
-    {   
+    {
         // 如果别名为空或者已经注册过了，就不注册
         if (alias.empty() || _index.find(alias) != _index.end())
         {
@@ -46,25 +48,28 @@ const Command *CommandRegistrant::getCommand(const std::string &commandName) con
 // 解析并输出help
 void CommandRegistrant::provideHelp() const
 {
-    std::cout << "可用命令：" << std::endl;
+    std::ostringstream helpBuilder;
+    helpBuilder << "可用命令：" << "\n";
     for (const auto &command : _commands)
     {
         if (command.hidden)
             continue;
-        std::cout << "  " << command.name;
+        helpBuilder << "  " << command.name;
         if (!command.aliases.empty())
         {
-            std::cout << " (";
+            helpBuilder << " (";
             for (std::size_t i = 0; i < command.aliases.size(); ++i)
             {
                 if (i != 0)
-                    std::cout << ", ";
-                std::cout << command.aliases[i];
+                    helpBuilder << ", ";
+                helpBuilder << command.aliases[i];
             }
-            std::cout << ")";
+            helpBuilder << ")";
         }
-        std::cout << " - " << command.description << std::endl;
+        helpBuilder << " - " << command.description << "\n";
     }
+    const std::string text = helpBuilder.str();
+    UIMessageLibrary::addMessage(MessageType::normal, 0.0f, text);
 }
 std::vector<std::string> CommandRegistrant::commandWords() const
 {
@@ -102,8 +107,9 @@ void CommandRegistrant::registerCommandsFromLibrary()
     std::vector<std::vector<Command>> commands = commandLibrary.commands();
     for (const auto &tagCommand : commands)
     {
-        for(const auto & command:tagCommand){
-             registerCommand(command);
+        for (const auto &command : tagCommand)
+        {
+            registerCommand(command);
         }
     }
 }

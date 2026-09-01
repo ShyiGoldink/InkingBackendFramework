@@ -2,6 +2,9 @@
 #include "database/IDatabase.h"
 #include "tool/JsonTool.h"
 #include "tool/PathFindTool.h"
+#include "ui/UIMessageLibrary.h"
+
+#include <sstream>
 namespace
 {
     constexpr int STAGE_LOAD_CONFIG = 1;
@@ -30,7 +33,7 @@ void DatabaseManager::initDatabase()
     // 池已存在时 init 不会重复创建连接，返回空结果，这里直接按成功处理
     if (results.empty())
     {
-        std::cout << "连接池已存在，无需重复初始化。" << std::endl;
+        UIMessageLibrary::addMessage(MessageType::normal, 0.0f, "连接池已存在，无需重复初始化。");
         setStageStatus(STAGE_INIT_DATABASE, "初始化数据库", true, "连接池已初始化");
         return;
     }
@@ -39,7 +42,9 @@ void DatabaseManager::initDatabase()
     for (QueryResult &query : results)
     {
         total++;
-        query.printResult();
+        const std::string text = query.toString();
+        const char *msg = text.c_str();
+        UIMessageLibrary::quickMessage(query.success, 0.0f, msg);
         if (query.success)
         {
             success++;
@@ -48,7 +53,10 @@ void DatabaseManager::initDatabase()
     // 计算成功率并给出结果
     total = total == 0 ? 1 : total;
     float rate = static_cast<float>(success) / total;
-    std::cout << "数据库初始化效果:" << rate << std::endl;
+    std::ostringstream initMessage;
+    initMessage << "数据库初始化效果:" << rate;
+    const std::string text = initMessage.str();
+    UIMessageLibrary::addMessage(MessageType::normal, 0.0f, text);
     if (rate != 0)
         setStageStatus(STAGE_INIT_DATABASE, "初始化数据库", true, "加载数据库配置成功");
     else
@@ -65,7 +73,9 @@ void DatabaseManager::execute(PoolType poolType, const std::vector<std::string> 
         return;
     }
     QueryResult result = databasePool->execute(arg);
-    result.printResult();
+    const std::string text = result.toString();
+    const char *msg = text.c_str();
+    UIMessageLibrary::quickMessage(result.success, 0.0f, msg);
     setStageStatus(STAGE_EXECUTE_DATABASE, "增/删/改数据库", result.success, result.errorMessage);
 }
 
@@ -79,7 +89,9 @@ void DatabaseManager::query(PoolType poolType, const std::vector<std::string> &a
         return;
     }
     QueryResult result = databasePool->query(arg);
-    result.printResult();
+    const std::string text = result.toString();
+    const char *msg = text.c_str();
+    UIMessageLibrary::quickMessage(result.success, 0.0f, msg);
     setStageStatus(STAGE_QUERY_DATABASE, "查数据库", result.success, result.errorMessage);
 }
 
@@ -93,7 +105,9 @@ void DatabaseManager::disconnectDatabase(PoolType poolType)
     {
         isSuccess = isSuccess && queryResult.success;
         errorMessages = errorMessages + ";" + queryResult.errorMessage;
-        queryResult.printResult();
+        const std::string text = queryResult.toString();
+        const char *msg = text.c_str();
+        UIMessageLibrary::quickMessage(queryResult.success, 0.0f, msg);
     }
     setStageStatus(STAGE_DISCONNECT_DATABASE, "数据库断开连接", isSuccess, errorMessages);
 }

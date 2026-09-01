@@ -2,12 +2,14 @@
 #define INKING_BACKEND_FRAMEWORK_BASIC_SHINE_LOG_H
 
 #include <string>
+#include <mutex>
 
 /**
  * @brief ShineBasicModule 使用的静态日志工具。
  *
  * 日志会写入可执行文件同级目录下的 Log.html。
- * 第一次写入时会检查文件是否存在；如果不存在，就创建并写入标题。
+ * 页面按“天”和“程序启动会话”分组展示日志，便于翻阅。
+ * 第一次写入时会检查文件是否存在；如果不存在，就创建带样式的网页。
  */
 class ShineLog
 {
@@ -85,7 +87,20 @@ private:
      */
     static std::string escapeHtml(const std::string &text);
 
+    /** @brief 判断日志文件是否已经是新版网页格式。 */
+    static bool fileUsesNewFormat(const std::string &path);
+
+    /** @brief 判断日志文件末尾是否已存在某天的分组标题。 */
+    static bool dayHeaderExists(const std::string &path, const std::string &day);
+
+    /** @brief 生成旧版日志的备份文件名。 */
+    static std::string legacyPathFor(const std::string &path);
+
     static bool _checked;
+    /** @brief 串行化日志写入，避免多线程并发写坏文件。 */
+    static std::mutex _mutex;
+    /** @brief 本次进程是否已经写入过会话标题。 */
+    static bool _sessionStarted;
 };
 
 #endif // INKING_BACKEND_FRAMEWORK_BASIC_SHINE_LOG_H

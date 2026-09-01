@@ -1,8 +1,10 @@
 #include "ShineStatusChecker.h"
 #include "ShineBasicModule.h"
 #include "ShineLog.h"
+#include "ui/UIMessageLibrary.h"
 
-#include<iostream>
+#include <iostream>
+#include <sstream>
 
 ShineBasicModule::ShineBasicModule() = default;
 
@@ -98,5 +100,8 @@ const Stage *ShineBasicModule::findStage(int step) const
 
 void ShineBasicModule::sayMyName() const
 {
-    std::cout<<"["<<moduleName()<<"@ 0x"<<std::hex<<(void*)this<<std::dec<<"]"<<std::endl;
+    std::ostringstream builder;
+    builder << "[" << moduleName() << "@ 0x" << std::hex << (void *)this << std::dec << "]";
+    const std::string text = builder.str();
+    UIMessageLibrary::addMessage(MessageType::normal, 0.0f, text);
 }

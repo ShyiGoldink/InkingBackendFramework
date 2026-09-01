@@ -1,4 +1,5 @@
 #include "tool/JsonTool.h"
+#include "ui/UIMessageLibrary.h"
 
 #include <fstream>
 #include <iomanip>
@@ -9,7 +10,9 @@ std::optional<JsonTool::Json> JsonTool::loadFromFile(const std::string &filePath
     std::ifstream file(filePath);
     if (!file.is_open())
     {
-        std::cout << "无法打开JSON文件: " << filePath << std::endl;
+        const std::string text = "无法打开JSON文件: " + filePath;
+        const char *msg = text.c_str();
+        UIMessageLibrary::quickMessage(false, 0.0f, msg);
         return std::nullopt;
     }
 
@@ -21,7 +24,9 @@ std::optional<JsonTool::Json> JsonTool::loadFromFile(const std::string &filePath
     }
     catch (const nlohmann::json::exception &error)
     {
-        std::cout << "JSON解析失败: " << error.what() << std::endl;
+        const std::string text = std::string("JSON解析失败: ") + error.what();
+        const char *msg = text.c_str();
+        UIMessageLibrary::quickMessage(false, 0.0f, msg);
         return std::nullopt;
     }
 }
@@ -31,7 +36,9 @@ bool JsonTool::saveToFile(const std::string &filePath, const Json &json, int ind
     std::ofstream file(filePath);
     if (!file.is_open())
     {
-        std::cout << "无法写入JSON文件: " << filePath << std::endl;
+        const std::string text = "无法写入JSON文件: " + filePath;
+        const char *msg = text.c_str();
+        UIMessageLibrary::quickMessage(false, 0.0f, msg);
         return false;
     }
 

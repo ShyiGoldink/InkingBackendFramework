@@ -109,7 +109,7 @@ struct QueryResult
         return result;
     }
     // 快捷打印
-    void printResult(std::ostream &out = std::cout) const
+    void printResult(std::ostream &out) const
     {
         if (!success)
         {

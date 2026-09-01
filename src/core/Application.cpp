@@ -1,5 +1,6 @@
 #include "core/Application.h"
 #include "tool/PasswordTool.h"
+#include "ui/UIMessageLibrary.h"
 
 #include <iostream>
 
@@ -33,7 +34,7 @@ void Application::run()
 
 void Application::showStartupMessage()
 {
-    std::cout << "InkingBackendFramework started. Type help to view commands." << std::endl;
-    setStageStatus(STAGE_STARTUP_MESSAGE, "STARTUP_MESSAGE", true, "Application startup message printed");
+    UIMessageLibrary::addMessage(MessageType::normal, 0.0f, "InkingBackendFramework已经启动。输入help来查看指令");
+    setStageStatus(STAGE_STARTUP_MESSAGE, "打印启动提示", true, "启动提示已打印");
     setStageDetail(STAGE_STARTUP_MESSAGE, "启动前的基础提示阶段", "如果没有看到启动提示，请检查标准输出是否可用。");
 }

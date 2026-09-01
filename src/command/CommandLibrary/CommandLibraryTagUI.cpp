@@ -1,6 +1,8 @@
 #include "command/CommandLibrary.h"
 #include "command/CommandCenter.h"
+#include "ui/UIMessageLibrary.h"
 #include <iostream>
+#include <sstream>
 
 std::vector<Command> CommandLibrary::uiCommands() const
 {
@@ -46,17 +48,20 @@ std::vector<Command> CommandLibrary::uiCommands() const
                      // 先输出模块身份信息
                      module->sayMyName();
                      // 再逐条展示该模块的自检阶段状态
+                     std::ostringstream statusBuilder;
                      const auto &stages = module->getStage();
                      for (const auto &stage : stages)
                      {
-                         std::cout << "  [" << (stage.status ? "通过" : "失败") << "] "
-                                   << stage.name << " - " << stage.message;
+                         statusBuilder << "  [" << (stage.status ? "通过" : "失败") << "] "
+                                       << stage.name << " - " << stage.message;
                          if (!stage.status)
                          {
-                             std::cout << " (建议: " << stage.suggestion << ")";
+                             statusBuilder << " (建议: " << stage.suggestion << ")";
                          }
-                         std::cout << std::endl;
+                         statusBuilder << "\n";
                      }
+                     const std::string statusText = statusBuilder.str();
+                     UIMessageLibrary::addMessage(MessageType::normal, 0.0f, statusText);
                  }
              }
              return CommandResult::Continue;
@@ -67,7 +72,7 @@ std::vector<Command> CommandLibrary::uiCommands() const
          "结束控制台交互循环并退出程序",
          [](const std::vector<std::string> &)
          {
-             std::cout << "控制台循环已停止." << std::endl;
+             UIMessageLibrary::addMessage(MessageType::normal, 0.0f, "控制台循环已停止.");
              return CommandResult::Quit;
          },
          false}};

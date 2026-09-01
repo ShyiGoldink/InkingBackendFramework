@@ -25,29 +25,40 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+# MySQL 开关：关闭时不编译 MySQL 后端
+option(INKING_ENABLE_MYSQL "Enable MySQL database backend" OFF)
+
+set(INKING_SOURCES
+    src/main.cpp
+    src/core/Application.cpp
+    src/command/CommandCenter.cpp
+    src/command/CommandExecutor.cpp
+    src/command/CommandLibrary/CommandLibrary.cpp
+    src/command/CommandLibrary/CommandLibraryTagDatabase.cpp
+    src/command/CommandLibrary/CommandLibraryTagUI.cpp
+    src/command/CommandRegistrant.cpp
+    src/database/DatabaseManager.cpp
+    src/database/DatabasePool.cpp
+    src/tool/FuzzyMatchTool.cpp
+    src/tool/PasswordTool.cpp
+    src/tool/JsonTool.cpp
+    src/tool/PathFindTool.cpp
+    src/ui/UIThread.cpp
+    src/ui/UIMessageLibrary.cpp
+    basic/ShineBasicModule.cpp
+    basic/ShineLog.cpp
+    basic/ShineStatusChecker.cpp
+)
+
+if(INKING_ENABLE_MYSQL)
+    list(APPEND INKING_SOURCES src/database/MySQL/MySQLDatabase.cpp)
+endif()
+
 #目标一：生成名为InkingBackendFramework的可执行文件
 #源代码在：src/main.cpp
 add_executable(
 	InkingBackendFramework
-	src/main.cpp
-	src/core/Application.cpp
-	src/command/CommandCenter.cpp
-	src/command/CommandExecutor.cpp
-	src/command/CommandLibrary/CommandLibrary.cpp
-    src/command/CommandLibrary/CommandLibraryTagDatabase.cpp
-    src/command/CommandLibrary/CommandLibraryTagUI.cpp
-	src/command/CommandRegistrant.cpp
-    src/database/DatabaseManager.cpp
-    src/database/DatabasePool.cpp
-    src/database/MySQL/MySQLDatabase.cpp
-	src/tool/FuzzyMatchTool.cpp
-	src/tool/PasswordTool.cpp
-	src/tool/JsonTool.cpp
-    src/tool/PathFindTool.cpp
-	src/ui/UIThread.cpp
-	basic/ShineBasicModule.cpp
-	basic/ShineLog.cpp
-	basic/ShineStatusChecker.cpp
+	${INKING_SOURCES}
 )
 #include目录
 target_include_directories(
@@ -75,11 +86,9 @@ add_custom_command(
 )
 
 #检查本地的MySQL环境
-#是否开启使用MySQL
-#如果你使用的不是MySQL这里的ON要改成OFF
-option(INKING_ENABLE_MYSQL "Enable MySQL database backend" ON)
 #如果开启使用MySQL，就要去找是否有本地合适的环境
 if(INKING_ENABLE_MYSQL)
+    target_compile_definitions(InkingBackendFramework PRIVATE INKING_ENABLE_MYSQL=1)
     # 根据平台设置不同的搜索路径
     if(WIN32)
         set(MYSQL_CONFIG_HINTS)

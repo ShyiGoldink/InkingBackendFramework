@@ -4,7 +4,15 @@
 #include "basic/ShineBasicModule.h"
 #include "command/CommandCenter.h"
 
-inline constexpr const char* kUIThreadModuleName = "UIThread";
+inline constexpr const char *kUIThreadModuleName = "UIThread";
+
+/**枚举状态机 */
+enum UIStastus
+{
+    getInput = 0,
+    addMessage = 1,
+    quitInput = 2
+};
 
 /**
  * @brief 控制台交互模块。
@@ -18,7 +26,8 @@ public:
     UIThread();
     ~UIThread() override;
 
-    std::string moduleName() const override{
+    std::string moduleName() const override
+    {
         return kUIThreadModuleName;
     };
 
@@ -31,7 +40,9 @@ private:
     void registerStages();
     void printPrompt() const;
 
-    CommandCenter _commandCenter;
+    UIStastus _status;            /**简单状态区分输入/输出状态 */
+    std::string _saveInput;       /**用户输入储存 */
+    CommandCenter _commandCenter; /**指令中心 */
     bool _running = false;
 };
 
