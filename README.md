@@ -44,6 +44,60 @@ cmake -S . -B build \
   -DMYSQL_LIBRARY=/your/mysql/lib/libmysqlclient.dylib
 ```
 
+## About replxx
+
+This project vendors the third-party library `replxx` under `third_party/replxx` for interactive command-line input. It is a portable readline-style terminal input library, mainly used to build a REPL / console command prompt with UTF-8 support, keyboard editing, command history, and completion hints.
+
+*Why it is included*
+
+- It is bundled in the repository so the project can compile without external package installation.
+- The project adds `third_party/replxx/include` to the include path in `CMakeLists.txt`.
+- It is intended for terminal-based interactive commands, especially the backend command system and developer CLI experience.
+
+*Current integration pattern*
+
+The build configuration adds the header directory like this:
+
+```cmake
+target_include_directories(
+    InkingBackendFramework
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/replxx/include
+)
+```
+
+The library can then be used in C++ code like this:
+
+```cpp
+#include "replxx.h"
+
+Replxx* rx = replxx_init();
+const char* line = replxx_input(rx, "Inking> ");
+if (line != nullptr) {
+    // process user input here
+}
+replxx_end(rx);
+```
+
+### Typical capabilities
+
+`replxx` provides common terminal editing features such as:
+
+- UTF-8 text input
+- cursor movement
+- line editing and deletion
+- command history
+- completion callbacks
+- syntax highlighting / hint callbacks
+- cross-platform terminal behavior on Linux, macOS, and Windows
+
+### Notes
+
+- This library is designed for interactive TTY terminals, not for batch or non-console programs.
+- In CI, scripts, or non-terminal environments, the input loop may not work as expected.
+- The project keeps the upstream source under `third_party/replxx`; if you need to upgrade or modify behavior, edit the vendored code under that directory.
+- The upstream library is distributed under a permissive BSD-style license; the project respects the original vendor license in `third_party/replxx/LICENSE.md`.
+
 ## Json
 
 This project vendors nlohmann/json under the MIT License.

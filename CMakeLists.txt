@@ -25,6 +25,10 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+
+# vendored third-party dependencies
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/third_party/replxx)
+
 # MySQL 开关：关闭时不编译 MySQL 后端
 option(INKING_ENABLE_MYSQL "Enable MySQL database backend" OFF)
 
@@ -60,13 +64,21 @@ add_executable(
 	InkingBackendFramework
 	${INKING_SOURCES}
 )
-#include目录
+# include目录
+# replxx 由独立 CMake target 负责编译和链接，确保跨平台下都能得到正确的库定义
+
 target_include_directories(
 	InkingBackendFramework
 	PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann_json/include
 	${CMAKE_CURRENT_SOURCE_DIR}
 	${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(
+    InkingBackendFramework
+    PRIVATE
+        replxx
 )
 
 target_compile_features(

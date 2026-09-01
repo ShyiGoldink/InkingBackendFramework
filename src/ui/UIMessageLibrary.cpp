@@ -1,6 +1,11 @@
 #include "ui/UIMessageLibrary.h"
 
+#include <chrono>
+#include <iostream>
+
 std::function<void()> UIMessageLibrary::_callbackFunction = nullptr;
+std::mutex UIMessageLibrary::_mutex;
+std::condition_variable UIMessageLibrary::_condition;
 std::queue<Message> UIMessageLibrary::_messageQueue = {};
 
 void UIMessageLibrary::addMessage(const MessageType &messageType, const float &delayTime, const std::string &message)
@@ -10,34 +15,11 @@ void UIMessageLibrary::addMessage(const MessageType &messageType, const float &d
         return;
     }
 
-    static std::string formattedMessage;
-
-    const char *prefix = "\033[33mInking> \033[0m";
-    const char *suffix = "";
-
-    switch (messageType)
     {
-    case MessageType::error:
-        prefix = "\033[31m[ERROR] \033[0m";
-        suffix = "\033[0m";
-        break;
-    case MessageType::pass:
-        prefix = "\033[32m[PASS] \033[0m";
-        suffix = "\033[0m";
-        break;
-    case MessageType::normal:
-    default:
-        prefix = "\033[33mInking> \033[0m";
-        suffix = "";
-        break;
+        std::lock_guard<std::mutex> lock(_mutex);
+        _messageQueue.push(Message{messageType, delayTime, message});
     }
-
-    formattedMessage = std::string(prefix) + message + suffix;
-
-    Message m{
-        messageType, delayTime, message};
-
-    _messageQueue.push(m);
+    _condition.notify_one();
 }
 
 void UIMessageLibrary::quickMessage(const bool &success, const float &delayTime, const std::string &message)
@@ -48,10 +30,49 @@ void UIMessageLibrary::quickMessage(const bool &success, const float &delayTime,
         addMessage(MessageType::error, delayTime, message);
 }
 
-void UIMessageLibrary::regnsisCallback(std::function<void()> callback)
+bool UIMessageLibrary::popMessage()
 {
-    if (_callbackFunction == nullptr)
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (_messageQueue.empty())
     {
-        _callbackFunction = callback;
+        return false;
     }
+
+    const Message message = _messageQueue.front();
+    _messageQueue.pop();
+
+    switch (message.type)
+    {
+    case MessageType::error:
+        std::cout << "\033[31m[ERROR] \033[0m";
+        break;
+    case MessageType::pass:
+        std::cout << "\033[32m[PASS] \033[0m";
+        break;
+    case MessageType::normal:
+    default:
+        std::cout << "\033[33mInking> \033[0m";
+        break;
+    }
+
+    std::cout << message.message << '\n';
+    return true;
+}
+
+std::vector<Message> UIMessageLibrary::drainMessages()
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    std::vector<Message> messages;
+    while (!_messageQueue.empty())
+    {
+        messages.push_back(_messageQueue.front());
+        _messageQueue.pop();
+    }
+    return messages;
+}
+
+void UIMessageLibrary::waitForMessage(std::chrono::milliseconds timeout)
+{
+    std::unique_lock<std::mutex> lock(_mutex);
+    _condition.wait_for(lock, timeout, [] { return !_messageQueue.empty(); });
 }

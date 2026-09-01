@@ -4,21 +4,16 @@
 #include "basic/ShineBasicModule.h"
 #include "command/CommandCenter.h"
 
-inline constexpr const char *kUIThreadModuleName = "UIThread";
+#include <mutex>
+#include <string>
 
-/**枚举状态机 */
-enum UIStastus
-{
-    getInput = 0,
-    addMessage = 1,
-    quitInput = 2
-};
+inline constexpr const char *kUIThreadModuleName = "UIThread";
 
 /**
  * @brief 控制台交互模块。
  *
- * 当前在主线程中运行交互循环，但保留 UiThread 命名，
- * 方便后续真正拆分线程或接入事件循环。
+ * 设计为：一个线程专门读入用户输入，另一个线程专门负责输出消息。
+ * 通过共享的输入缓存与 console 锁来实现“看起来像没有被阻塞”的交互体验。
  */
 class UIThread : public ShineBasicModule
 {
@@ -32,16 +27,18 @@ public:
     };
 
     /**
-     * @brief 启动控制台交互循环。
+     * @brief 启动交互循环。
      */
     void run();
 
 private:
     void registerStages();
-    void printPrompt() const;
+    void renderQueuedMessages();
 
-    UIStastus _status;            /**简单状态区分输入/输出状态 */
     std::string _saveInput;       /**用户输入储存 */
+    std::string _liveInput;       /**当前用户编辑中的实时输入 */
+    int _liveCursorPosition = 0; /**当前输入光标位置 */
+    std::mutex _consoleMutex;     /**控制台输出互斥量 */
     CommandCenter _commandCenter; /**指令中心 */
     bool _running = false;
 };

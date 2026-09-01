@@ -47,3 +47,4 @@ local.*
 # Root-level generated symlinks
 # Git ignore patterns cannot detect "all symlinks" by file type, so list known generated links here.
 /compile_commands.json
+run.sh
