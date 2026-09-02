@@ -10,7 +10,7 @@ ShineBasicModule::ShineBasicModule() = default;
 
 ShineBasicModule::~ShineBasicModule() = default;
 
-const std::vector<Stage> &ShineBasicModule::getStage() const
+std::vector<Stage> ShineBasicModule::getStage() const
 {
     return _stage;
 }

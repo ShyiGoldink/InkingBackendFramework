@@ -19,7 +19,6 @@ Application::~Application() = default;
 void Application::run()
 {
     showStartupMessage();
-    // UI loop runs in its own worker, while the main thread waits for it to finish.
     PasswordTool passwordTool;
     if (!passwordTool.verifyConsole())
         return;

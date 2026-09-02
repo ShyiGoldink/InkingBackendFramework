@@ -1,9 +1,10 @@
 #ifndef INKING_BACKEND_FRAMEWORK_BASIC_SHINE_STATUS_CHECKER_H
 #define INKING_BACKEND_FRAMEWORK_BASIC_SHINE_STATUS_CHECKER_H
 
-#include <string>
 #include <unordered_map>
+#include <string>
 #include <vector>
+#include <mutex>
 
 class ShineBasicModule;
 
@@ -31,6 +32,7 @@ public:
 private:
     /** 储存basic基类对指针用于获取“获取stage数据的函数”*/
     static std::unordered_map<std::string, std::vector<ShineBasicModule *>> _callbackPointers;
+    static std::mutex _mutex;/**多线程保护 */
 };
 
 #endif // INKING_BACKEND_FRAMEWORK_BASIC_SHINE_STATUS_CHECKER_H

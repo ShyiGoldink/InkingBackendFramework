@@ -62,7 +62,7 @@ void UIThread::renderQueuedMessages()
 void UIThread::run()
 {
     setStageStatus(STAGE_START_LOOP, "启动交互循环", true, "控制台交互已启动");
-    _running = true;
+    _running.store(true);
 
     replxx::Replxx rx;
     rx.set_prompt("\033[33mInking> \033[0m");
@@ -75,10 +75,10 @@ void UIThread::run()
 
     std::thread outputThread([this]()
                              {
-                                 while (_running)
+                                 while (_running.load())
                                  {
                                      UIMessageLibrary::waitForMessage(std::chrono::milliseconds(50));
-                                     if (!_running)
+                                     if (!_running.load())
                                      {
                                          break;
                                      }
@@ -86,13 +86,13 @@ void UIThread::run()
                                  }
                              });
 
-    while (_running)
+    while (_running.load())
     {
         setStageStatus(STAGE_READ_INPUT, "读取控制台输入", true, "等待用户输入");
         const char* line = rx.input("");
         if (line == nullptr)
         {
-            _running = false;
+            _running.store(false);
             break;
         }
 
@@ -106,7 +106,7 @@ void UIThread::run()
 
         if (result == CommandResult::Quit)
         {
-            _running = false;
+            _running.store(false);
         }
         else{
             std::lock_guard<std::mutex> lock(_consoleMutex);

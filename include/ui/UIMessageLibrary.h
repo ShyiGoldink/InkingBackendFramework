@@ -18,8 +18,6 @@ public:
     static void addMessage(const MessageType &messageType, const float &delayTime, const std::string &message);
     /**快捷添加消息，通过bool快捷决定消息类型 */
     static void quickMessage(const bool &success, const float &delayTime, const std::string &message);
-    /**消息输出，如果存在消息就返回true,否则返回false */
-    static bool popMessage();
     /**取出当前所有待处理消息，供 UI 线程统一重绘/输出 */
     static std::vector<Message> drainMessages();
     /**等待消息到达，供 UI 线程阻塞等待新事件 */
@@ -28,7 +26,6 @@ public:
 private:
     UIMessageLibrary();
     ~UIMessageLibrary();
-    static std::function<void()> _callbackFunction;
     static std::mutex _mutex;
     static std::condition_variable _condition;
     static std::queue<Message> _messageQueue;

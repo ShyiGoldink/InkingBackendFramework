@@ -3,9 +3,10 @@
 
 #include "dataStruct/DatabaseStruct.h"
 
-#include <vector>
 #include <unordered_map>
+#include <vector>
 #include <memory>
+#include <mutex>
 
 class IDatabase;
 
@@ -58,6 +59,7 @@ private:
     void release();
     PoolType _poolType;             /**当前连接池对象的连接类型 */
     std::unique_ptr<IDatabase> _db; /**当前借出的对象 */
+    static std::mutex _mutex;/**用于在多线程之中保护队列 */
 };
 
 #endif // INKING_BACKEND_FRAMEWORK_DATABASE_POOL_H

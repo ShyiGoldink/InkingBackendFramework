@@ -4,6 +4,7 @@
 #include "basic/ShineBasicModule.h"
 #include "command/CommandCenter.h"
 
+#include <atomic>
 #include <mutex>
 #include <string>
 
@@ -40,7 +41,7 @@ private:
     int _liveCursorPosition = 0; /**当前输入光标位置 */
     std::mutex _consoleMutex;     /**控制台输出互斥量 */
     CommandCenter _commandCenter; /**指令中心 */
-    bool _running = false;
+    std::atomic<bool> _running{false};
 };
 
 #endif // INKING_BACKEND_FRAMEWORK_UI_UI_THREAD_H

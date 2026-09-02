@@ -6,11 +6,12 @@
 #endif
 
 std::unordered_map<PoolType, std::vector<std::unique_ptr<IDatabase>>> DatabasePool::_pools;
+std::mutex DatabasePool::_mutex;
 
 // 构造函数，构造成功的同时就取一个指针作为对象
 DatabasePool::DatabasePool(PoolType poolType)
     : _poolType(poolType)
-{
+{   std::lock_guard<std::mutex> lock(_mutex);
     auto it = _pools.find(poolType);
     if (it != _pools.end() && !it->second.empty())
     {
@@ -33,7 +34,7 @@ void DatabasePool::release()
     {
         return;
     }
-
+    std::lock_guard<std::mutex> lock(_mutex);
     auto it = _pools.find(_poolType);
     if (it != _pools.end())
     {
@@ -45,10 +46,11 @@ void DatabasePool::release()
 }
 
 std::vector<QueryResult> DatabasePool::init(PoolType poolType, int num, DatabaseConfig config)
-{
+{   
     std::vector<QueryResult> result = {};
     // 首先根据num初始化函数
     num = num > maxPoolNum ? maxPoolNum : num;
+    std::lock_guard<std::mutex> lock(_mutex);
     // 没有该类型的池再进行初始化，否则不进行初始化
     if (_pools.find(poolType) == _pools.end())
     {
@@ -82,6 +84,7 @@ std::vector<QueryResult> DatabasePool::init(PoolType poolType, int num, Database
 std::vector<QueryResult> DatabasePool::free(PoolType poolType)
 {
     std::vector<QueryResult> results;
+    std::lock_guard<std::mutex> lock(_mutex);
     auto it = _pools.find(poolType);
     if (it != _pools.end())
     {
@@ -102,7 +105,7 @@ std::vector<QueryResult> DatabasePool::free(PoolType poolType)
 std::vector<QueryResult> DatabasePool::freeAll()
 {
     std::vector<QueryResult> results;
-
+    std::lock_guard<std::mutex> lock(_mutex);
     for (auto &pool : _pools)
     {
         for (auto &database : pool.second)

@@ -27,7 +27,7 @@ public:
     virtual std::string moduleName() const = 0;
 
     /**给外部提供一个接口用于获取到stage数据 */
-    const std::vector<Stage> &getStage() const;
+    std::vector<Stage> getStage() const;
 
         /**为命令提供一个快捷的方法，用于快速输出对象信息 */
     void sayMyName()  const;

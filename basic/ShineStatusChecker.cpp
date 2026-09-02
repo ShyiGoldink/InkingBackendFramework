@@ -4,10 +4,11 @@
 
 // 静态变量初始化
 std::unordered_map<std::string, std::vector<ShineBasicModule *>> ShineStatusChecker::_callbackPointers;
+std::mutex ShineStatusChecker::_mutex;
 
 // 注册指针
 void ShineStatusChecker::registerCallbackPointer(const std::string &moduleName, ShineBasicModule *module)
-{
+{   std::lock_guard<std::mutex> lock(_mutex);
     if (module)
     {
         auto &modules = _callbackPointers[moduleName];
@@ -20,7 +21,7 @@ void ShineStatusChecker::registerCallbackPointer(const std::string &moduleName, 
 }
 // 注销指针
 void ShineStatusChecker::discuteCallbackPointer(const std::string &moduleName, ShineBasicModule *module)
-{
+{   std::lock_guard<std::mutex> lock(_mutex);
     if (module) // 鲁棒设计
     {
         auto it = _callbackPointers.find(moduleName); // 找到key下的vector
@@ -38,7 +39,7 @@ void ShineStatusChecker::discuteCallbackPointer(const std::string &moduleName, S
 }
 // 获取所有的key值
 std::vector<std::string> ShineStatusChecker::getAllModuleNames()
-{
+{   std::lock_guard<std::mutex> lock(_mutex);
     std::vector<std::string> moduleNames;
     for (const auto &pair : _callbackPointers)
     {
@@ -48,7 +49,7 @@ std::vector<std::string> ShineStatusChecker::getAllModuleNames()
 }
 // 根据传入的key值，获取需要的module指针列表
 std::vector<ShineBasicModule *> ShineStatusChecker::getModules(const std::string &moduleName)
-{
+{   std::lock_guard<std::mutex> lock(_mutex);
     auto it = _callbackPointers.find(moduleName);
     if (it != _callbackPointers.end())
     {
