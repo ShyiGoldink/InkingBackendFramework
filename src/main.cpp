@@ -12,6 +12,7 @@ int main()
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
 #endif
+    //这里进入了主线程
     Application app;
     app.run();
     return 0;

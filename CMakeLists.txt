@@ -26,12 +26,13 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
-# vendored third-party dependencies
+#添加第三方库支持
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/third_party/replxx)
 
 # MySQL 开关：关闭时不编译 MySQL 后端
 option(INKING_ENABLE_MYSQL "Enable MySQL database backend" OFF)
 
+#变量声明：源代码在：src/main.cpp等
 set(INKING_SOURCES
     src/main.cpp
     src/core/Application.cpp
@@ -59,7 +60,6 @@ if(INKING_ENABLE_MYSQL)
 endif()
 
 #目标一：生成名为InkingBackendFramework的可执行文件
-#源代码在：src/main.cpp
 add_executable(
 	InkingBackendFramework
 	${INKING_SOURCES}
