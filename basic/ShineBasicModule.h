@@ -72,7 +72,7 @@ private:
     Stage *findStage(int step);
     const Stage *findStage(int step) const;
 
-    std::vector<Stage> _stage;                               /** 模块的自检阶段表，按第一次注册顺序保存 */
+    std::vector<Stage> _stage;                               /** 模块的自检阶段表，按 step 升序保存 */
     std::optional<StatusRegisterToken> _statusRegisterToken; /**延迟构造Token */
 };
 

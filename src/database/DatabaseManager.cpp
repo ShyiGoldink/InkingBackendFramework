@@ -5,13 +5,14 @@
 #include "ui/UIMessageLibrary.h"
 
 #include <sstream>
+
 namespace
-{
-    constexpr int STAGE_LOAD_CONFIG = 1;
-    constexpr int STAGE_INIT_DATABASE = 2;
-    constexpr int STAGE_EXECUTE_DATABASE = 3;
-    constexpr int STAGE_QUERY_DATABASE = 4;
-    constexpr int STAGE_DISCONNECT_DATABASE = 5;
+{   constexpr int STAGE_INIT_DATABASE_POOL = 1;
+    constexpr int STAGE_LOAD_CONFIG = 2;
+    constexpr int STAGE_INIT_DATABASE = 3;
+    constexpr int STAGE_EXECUTE_DATABASE = 4;
+    constexpr int STAGE_QUERY_DATABASE = 5;
+    constexpr int STAGE_DISCONNECT_DATABASE = 6;
 }
 
 DatabaseManager::DatabaseManager()
@@ -28,8 +29,17 @@ void DatabaseManager::initDatabase()
         setStageStatus(STAGE_INIT_DATABASE, "初始化数据库", false, "加载数据库配置失败");
         return;
     }
+    //初始化连接池结果
+    std::vector<QueryResult> results = {};
     // 初始化数据库
-    std::vector<QueryResult> results = DatabasePool::init(PoolType::MySQL, maxPoolNum, config);
+    try
+    {
+        results = DatabasePool::init(PoolType::MySQL, maxPoolNum, config);
+    }
+    catch(const std::exception& e)
+    {
+         setStageStatus(STAGE_INIT_DATABASE_POOL, "初始化连接池", false, e.what());
+    }
     // 池已存在时 init 不会重复创建连接，返回空结果，这里直接按成功处理
     if (results.empty())
     {

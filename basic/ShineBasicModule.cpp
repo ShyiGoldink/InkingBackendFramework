@@ -3,6 +3,7 @@
 #include "ShineLog.h"
 #include "ui/UIMessageLibrary.h"
 
+#include <algorithm>
 #include <iostream>
 #include <sstream>
 
@@ -54,6 +55,8 @@ void ShineBasicModule::setStageStatus(int step, const std::string &name, bool st
     {
         ShineLog::error(moduleName(), logMessage);
     }
+    std::stable_sort(_stage.begin(), _stage.end(), [](const Stage &left, const Stage &right)
+                     { return left.step < right.step; });
 }
 
 void ShineBasicModule::setStageDetail(int step, const std::string &description, const std::string &suggestion)

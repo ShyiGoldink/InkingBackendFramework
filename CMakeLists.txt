@@ -50,6 +50,8 @@ set(INKING_SOURCES
     src/tool/PathFindTool.cpp
     src/ui/UIThread.cpp
     src/ui/UIMessageLibrary.cpp
+    src/thread/ThreadPool.cpp
+    src/thread/TaskQueueLoop.cpp
     basic/ShineBasicModule.cpp
     basic/ShineLog.cpp
     basic/ShineStatusChecker.cpp
