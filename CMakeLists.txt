@@ -40,6 +40,7 @@ set(INKING_SOURCES
     src/command/CommandExecutor.cpp
     src/command/CommandLibrary/CommandLibrary.cpp
     src/command/CommandLibrary/CommandLibraryTagDatabase.cpp
+    src/command/CommandLibrary/CommandLibraryTagNet.cpp
     src/command/CommandLibrary/CommandLibraryTagUI.cpp
     src/command/CommandRegistrant.cpp
     src/database/DatabaseManager.cpp
@@ -48,6 +49,11 @@ set(INKING_SOURCES
     src/tool/PasswordTool.cpp
     src/tool/JsonTool.cpp
     src/tool/PathFindTool.cpp
+    src/net/SimpleTextProtocol.cpp
+    src/net/TcpServer.cpp
+    src/sense/FakeSensorDataStore.cpp
+    src/sense/MySQLSensorDataStore.cpp
+    src/sense/SenseDataService.cpp
     src/ui/UIThread.cpp
     src/ui/UIMessageLibrary.cpp
     src/thread/ThreadPool.cpp
@@ -82,6 +88,14 @@ target_link_libraries(
     PRIVATE
         replxx
 )
+
+if(WIN32)
+    target_link_libraries(
+        InkingBackendFramework
+        PRIVATE
+            ws2_32
+    )
+endif()
 
 target_compile_features(
 	InkingBackendFramework

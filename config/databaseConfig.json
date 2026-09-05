@@ -4,6 +4,6 @@
         "port":3306,
         "userName":"root",
         "password":"123456",
-        "databaseName":"default"
+        "databaseName":"inking_backend"
     }
 }

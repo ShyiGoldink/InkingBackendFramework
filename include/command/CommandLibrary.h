@@ -18,6 +18,8 @@ public:
     std::vector<std::vector<Command>> commands() const;
     /**获取数据库相关命令 */
     std::vector<Command> databaseCommands() const;
+    /**获取网络相关命令 */
+    std::vector<Command> netCommands() const;
     /**获取UI界面相关命令 */
     std::vector<Command> uiCommands() const;
 };

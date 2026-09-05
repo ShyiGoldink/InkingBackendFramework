@@ -2,6 +2,8 @@
 #define INKING_BACKEND_FRAMEWORK_CORE_APPLICATION_H
 
 #include "basic/ShineBasicModule.h"
+#include "net/TcpServer.h"
+#include "sense/SenseDataService.h"
 #include "ui/UIThread.h"
 
 #include <thread>
@@ -27,6 +29,8 @@ private:
      */
     void showStartupMessage();
 
+    SenseDataService _senseDataService;
+    TcpServer _tcpServer;
     UIThread _uiThread;
     std::thread _uiWorker;
 };

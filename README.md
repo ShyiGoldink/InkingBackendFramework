@@ -103,3 +103,52 @@ replxx_end(rx);
 This project vendors nlohmann/json under the MIT License.
 See `third_party/nlohmann_json/LICENSE.MIT`.
 The default database config is `config/databaseConfig.json`. During the first build, CMake copies it to `build/bin/config/databaseConfig.json`.
+
+## About TCP（鸿蒙硬件文本协议）
+
+面向鸿蒙硬件（BearPi/Hi3861）的 TCP 文本服务。数据库部署到云服务器后才启用
+MySQL；本地没有数据库时自动回退内存假数据，因此本地也可以直接联调。
+
+### 协议约定
+
+- 默认监听端口：`8888`（`include/net/TcpServer.h` 中的 `kDefaultTcpPort`，可用 `net-port` 修改）。
+- 编码：UTF-8 文本。
+- 消息边界：一条消息以 `\n` 结尾，用换行符拆开 TCP 粘包；消息内部不允许出现换行符。
+- 消息格式：`指令/数据`，按第一个 `/` 切分。
+
+| 客户端发送 | 含义 | 服务器返回 |
+| --- | --- | --- |
+| `GET_TIME/` | 拉取服务器时间 | `SEND_TIME/<Unix毫秒>` |
+| `GET_DATA_MINUTE/` | 分钟表格（1 分钟/点） | `SEND_DATA_TABEL/[10湿度][10温度][起始毫秒]` |
+| `GET_DATA_HOUR/` | 小时表格（1 小时/点） | 同上 |
+| `GET_DATA_DAY/` | 天表格（1 天/点） | 同上 |
+| `SEND_SENSE_DATA/25.50,60.00` | 上报温度,湿度 | 按测试程序约定不回包（数据入库） |
+
+> 各表格固定 10 个点，服务器只返回起始时间戳；客户端按页面粒度
+> （分/时/天）自行推导后续点的时间戳。上传命令如需回执，把
+> `SenseDataService.cpp` 中的 `kReplyToUpload` 改成 `true` 即可。
+
+### 代码结构
+
+- `net/TcpServer`：TCP 监听、按行拆包、连接管理（一个连接一个线程）。
+- `net/IProtocol`：协议接口，一行文本与 `NetMessage` 互转；实现为 `SimpleTextProtocol`。
+- `sense/SenseDataService`：协议分发（GET_TIME / GET_DATA_* / SEND_SENSE_DATA）。
+- `sense/ISensorDataStore`：数据存取抽象；`MySQLSensorDataStore`（真实表）与
+  `FakeSensorDataStore`（本地假数据）两种实现。
+- `sql/sense_schema.sql`：MySQL 表结构（`sense_data`）。
+
+### 控制台命令
+
+- `net-start` / `net-stop`：启动 / 停止 TCP 服务器。
+- `net-status`：查看端口与连接数。
+- `net-port <端口>`：修改端口（需先停止服务器再启动）。
+- `net-clients`：查看当前已连接的客户端。
+- `sense-info`：查看当前数据后端（MySQL/假数据）与数据量。
+
+### 联调测试
+
+```bash
+python D:\HarmonyTest\test_server.py --host 127.0.0.1 --port 8888
+```
+
+测试覆盖 `GET_TIME`、三张表格、传感器上报，全部通过会输出 `全部通过`。
