@@ -30,7 +30,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/third_party/replxx)
 
 # MySQL 开关：关闭时不编译 MySQL 后端
-option(INKING_ENABLE_MYSQL "Enable MySQL database backend" OFF)
+option(INKING_ENABLE_MYSQL "Enable MySQL database backend" ON)
 
 #变量声明：源代码在：src/main.cpp等
 set(INKING_SOURCES
