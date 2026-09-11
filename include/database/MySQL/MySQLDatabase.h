@@ -3,6 +3,7 @@
 
 #include <mysql.h>
 #include "database/IDatabase.h"
+
 /**
  * @brief
  * 这是一个MySQL的数据库实现类
@@ -31,8 +32,11 @@ public:
     QueryResult execute(const std::string &sql) override;
     QueryResult query(const std::string &sql) override;
     QueryResult disconnect() override;
+    QueryResult ping() override;
+    bool isBroken() const override;
 
 private:
     MYSQL *_conn = nullptr;
+    bool _broken = false; /** 上一次操作是否遇到了连接级错误 */
 };
 #endif // INKING_BACKEND_FRAMEWORK_MYSQL_DATABASE_H

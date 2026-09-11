@@ -3,13 +3,13 @@
 
 #include "dataStruct/DatabaseStruct.h"
 
-#include <chrono>
-#include <cstdint>
 #include <condition_variable>
-#include <memory>
-#include <mutex>
 #include <unordered_map>
+#include <cstdint>
+#include <chrono>
+#include <memory>
 #include <vector>
+#include <mutex>
 
 class IDatabase;
 
@@ -20,6 +20,12 @@ class IDatabase;
 enum PoolType
 {
     MySQL = 0,
+};
+
+ struct PooledConnection
+{
+    std::unique_ptr<IDatabase> database;
+    std::chrono::steady_clock::time_point idleSince;
 };
 
 /**一般上限：常规情况下连接池保持的连接数量（也是清理空闲连接时的目标值） */
@@ -70,8 +76,22 @@ public:
     static PoolInfo info(PoolType type);
     /**手动释放超过一般上限(maxPoolNum)的空闲连接，返回清理掉的连接数量 */
     static int trimIdle(PoolType type);
+    /**
+     * 对所有已初始化的池做一次空闲清理，返回清掉的连接总数。
+     * 后台维护任务会周期性调用它，也可以手动调用。
+     */
+    static int maintainAllIdle();
     /**设置借出连接时等待空闲连接的超时时长，默认 5 秒 */
     static void setBorrowTimeout(const std::chrono::milliseconds &timeout);
+        /**空闲超过这个时长就主动断开（默认 60 秒），必须明显小于服务端/NAT 的空闲超时 */
+    static void setMaxIdleTime(const std::chrono::milliseconds &timeout);
+    /**
+     * 空闲超过这个时长的连接，借出前才做一次 ping。
+     * 默认 0，也就是每次借出都 ping：实测一次 ping 约 19 微秒，
+     * 而重连一次约 5700 微秒，所以没必要为了省这点开销去猜哪条连接可疑。
+     * 以后如果哪天真觉得这个往返贵，把它调大即可。
+     */
+    static void setProbeIdleThreshold(const std::chrono::milliseconds &threshold);
 
     /**拿出借用好的对象 */
     IDatabase *operator->() const { return _db.get(); }
@@ -84,9 +104,8 @@ private:
     static std::unique_ptr<IDatabase> createConnection(PoolType type, const DatabaseConfig &config);
     /**锁内调用：先占用名额再在锁外执行建连，完成后优先取用期间归还的连接 */
     bool createAndTake(const DatabaseConfig &config, std::unique_lock<std::mutex> &lock);
-
     /**空闲连接池：如果有多个池的话，可以从这里取，但其实全部都要走这里 */
-    static std::unordered_map<PoolType, std::vector<std::unique_ptr<IDatabase>>> _pools;
+    static std::unordered_map<PoolType, std::vector<PooledConnection>> _pools;
     /**各类型的连接配置：池空时按需新建连接使用 */
     static std::unordered_map<PoolType, DatabaseConfig> _configs;
     /**各类型当前存活的连接总数（空闲 + 借出） */
@@ -96,6 +115,9 @@ private:
     static std::mutex _mutex;              /**用于在多线程之中保护连接池 */
     static std::condition_variable _condition; /**借出连接时等待空闲连接 */
     static std::chrono::milliseconds _borrowTimeout;
+    static std::chrono::milliseconds _maxIdleTime;
+    static std::chrono::milliseconds _probeIdleThreshold;
+    std::chrono::steady_clock::time_point _idleSince{};/** 本次借出的连接进入池的时刻，由 takeIdleLocked 记录 */
 
     /**归还对象，析构时自行调用 */
     void release();

@@ -17,7 +17,7 @@ enum MessageType
 struct Message
 {
     MessageType type;
-    float delayTime;
+    float delayTime;/** 延迟多少秒之后才输出，0 表示立即。延迟由任务队列负责，见 UIMessageLibrary::addMessage */
     std::string message;
 };
 

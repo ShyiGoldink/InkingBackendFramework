@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <array>
+#include <chrono>
 #include <condition_variable>
 #include <functional>
 #include <mutex>
@@ -35,8 +36,12 @@ ThreadPool();
  * @brief 受限线程池初始化函数：注意传入的内容和生命周期！
  * @param predicate 必须是返回bool值的函数，作为谓词，代表“唤醒线程的条件”
  * @param execute 必须是返回void值的函数，作为执行逻辑，代表“唤醒线程之后做什么”
+ * @param waitHint 可选。返回“最多还能睡多久”，用于支持延迟任务：
+ *                 延迟任务到点的时候没人会来 notify，只能靠这个超时把线程叫醒。
+ *                 不传就是原来的行为：一直睡到有人唤醒。
  */
-void init(std::function<bool()> predicate,std::function<void()> execute);
+void init(std::function<bool()> predicate,std::function<void()> execute,
+          std::function<std::chrono::milliseconds()> waitHint = {});
 /**线程池关闭函数 */
 void quit();
 /**唤醒正在等待的管家线程，例如新任务入队后调用 */
@@ -52,8 +57,10 @@ std::mutex _mutex;/**通过锁来保护多线程进程 */
 std::condition_variable _cv;/**条件变量，整个线程池使用同一个环境变量，通过公平唤醒来提升线程池的性能*/
 std::function<bool()> _predicateCallback;/**谓词回调函数，初始化时用于判断环境变量 */
 std::function<void()> _executeCallback;/**执行回调函数，满足条件变量后执行 */
+std::function<std::chrono::milliseconds()> _waitHintCallback;/**最多还能睡多久，用于延迟任务 */
 std::atomic<bool> _isQuit{false};/**线程池退出标志位 */
-int _stage;/*一个小辅助数，用于给次注册管家函数添加阶段差别*/
+std::atomic<int> _stage;/*一个小辅助数，用于给次注册管家函数添加阶段差别。
+                           管家线程会读它，所以要用原子的，不然也是个数据竞争*/
 /**安全关闭全部线程 */
 void release();
 /**管理函数，线程出生起就要执行这个函数，这个函数负责管理线程 */

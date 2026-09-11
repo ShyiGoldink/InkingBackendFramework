@@ -13,54 +13,71 @@ ShineBasicModule::~ShineBasicModule() = default;
 
 std::vector<Stage> ShineBasicModule::getStage() const
 {
-    return _stage;
+    std::lock_guard<std::mutex> lock(_stageMutex);
+    return _stage; // 拷贝一份返回，避免把内部指针暴露出去
 }
 
 void ShineBasicModule::setStageStatus(int step, const std::string &name, bool statu, const std::string &message)
-{ // 首先找到stage
-    Stage *stage = findStage(step);
-    // 如果stage不存在，那么创建stage
-    if (stage == nullptr)
-    {
-        Stage newStage;
-        newStage.step = step;
-        newStage.name = name;
-        _stage.push_back(newStage);
-        stage = &_stage.back();
-    }
-    // 如果stage存在，并且name与当前修改的name不一致，那么写入错误日志并拒绝更新
-    else if (!stage->name.empty() && stage->name != name)
-    {
-        ShineLog::error(
-            moduleName(),
-            "自检阶段编号冲突: step " + std::to_string(step) + " 已注册为 " + stage->name + "，不能重新注册为 " + name);
-        return;
-    }
-    // 如果stage存在但是name为空，那么更新stage的name为当前修改的name
-    else if (stage->name.empty())
-    {
-        stage->name = name;
-    }
-    // 最后更新状态和消息
-    stage->status = statu;
-    stage->message = message;
+{
+    std::string logMessage;
+    bool logAsError = !statu;
 
-    const std::string logMessage = stage->name + " - " + message;
-    // 根据状态写入日志
-    if (statu)
     {
-        ShineLog::pass(moduleName(), logMessage);
+        std::lock_guard<std::mutex> lock(_stageMutex);
+
+        // 首先找到stage
+        Stage *stage = findStage(step);
+        // 如果stage不存在，那么创建stage
+        if (stage == nullptr)
+        {
+            Stage newStage;
+            newStage.step = step;
+            newStage.name = name;
+            _stage.push_back(newStage);
+            stage = &_stage.back();
+        }
+        // 如果stage存在，并且name与当前修改的name不一致，那么记录错误日志并拒绝更新
+        else if (!stage->name.empty() && stage->name != name)
+        {
+            logAsError = true;
+            logMessage = "自检阶段编号冲突: step " + std::to_string(step) + " 已注册为 " + stage->name +
+                         "，不能重新注册为 " + name;
+        }
+        // 如果stage存在但是name为空，那么更新stage的name为当前修改的name
+        else if (stage->name.empty())
+        {
+            stage->name = name;
+            stage->status = statu;
+            stage->message = message;
+            logMessage = stage->name + " - " + message;
+        }
+        else
+        {
+            stage->status = statu;
+            stage->message = message;
+            logMessage = stage->name + " - " + message;
+        }
+
+        std::stable_sort(_stage.begin(), _stage.end(), [](const Stage &left, const Stage &right)
+                         { return left.step < right.step; });
     }
-    else
+
+    // 日志写在锁外：日志模块自己有锁，两把锁不要嵌套
+    if (logAsError)
     {
         ShineLog::error(moduleName(), logMessage);
     }
-    std::stable_sort(_stage.begin(), _stage.end(), [](const Stage &left, const Stage &right)
-                     { return left.step < right.step; });
+    else
+    {
+        ShineLog::pass(moduleName(), logMessage);
+    }
 }
 
 void ShineBasicModule::setStageDetail(int step, const std::string &description, const std::string &suggestion)
-{ // 首先找到stage
+{
+    std::lock_guard<std::mutex> lock(_stageMutex);
+
+    // 首先找到stage
     Stage *stage = findStage(step);
     // 如果stage不存在，那么创建stage
     if (stage == nullptr)

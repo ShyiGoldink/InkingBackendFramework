@@ -4,14 +4,22 @@
 
 #include <string>
 
+namespace
+{
+/** 队列为空时管家线程最多睡多久（有任务入队时会立刻被唤醒，所以这个值只是兜底） */
+constexpr auto kIdleWait = std::chrono::hours(1);
+}
+
 TaskQueueLoop::TaskQueueLoop()
 {
     _threadLoop = std::make_unique<ThreadPool>();
     _threadLoop->init(
-        // 谓词：队列非空时唤醒管家线程
-        [this]() { return !isEmpty(); },
+        // 谓词：有任务到期时才唤醒管家线程（只看队列非空不行，延迟任务会空转）
+        [this]() { return hasDueTask(); },
         // 执行体：每次从队列中取出一个任务执行
-        [this]() { executeTask(); });
+        [this]() { executeTask(); },
+        // 等待提示：睡到最近一个任务到期为止
+        [this]() { return timeUntilNextDue(); });
 }
 
 TaskQueueLoop::~TaskQueueLoop()
@@ -28,9 +36,14 @@ TaskQueueLoop::~TaskQueueLoop()
 
 void TaskQueueLoop::addTask(Task<std::any> task)
 {
+    addTask(std::move(task), std::chrono::milliseconds(0));
+}
+
+void TaskQueueLoop::addTask(Task<std::any> task, std::chrono::milliseconds delay)
+{
     {
         std::lock_guard<std::mutex> lock(_mutex);
-        _queue.push(std::make_unique<Task<std::any>>(std::move(task)));
+        _queue.emplace(Clock::now() + delay, std::make_unique<Task<std::any>>(std::move(task)));
     }
     // 唤醒管家线程处理新任务
     _threadLoop->wake();
@@ -42,6 +55,30 @@ bool TaskQueueLoop::isEmpty() const
     return _queue.empty();
 }
 
+bool TaskQueueLoop::hasDueTask() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    // multimap 按到期时刻排序，所以只看第一个就够了
+    return !_queue.empty() && _queue.begin()->first <= Clock::now();
+}
+
+std::chrono::milliseconds TaskQueueLoop::timeUntilNextDue() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (_queue.empty())
+    {
+        return kIdleWait;
+    }
+
+    const auto now = Clock::now();
+    const auto due = _queue.begin()->first;
+    if (due <= now)
+    {
+        return std::chrono::milliseconds(0);
+    }
+    return std::chrono::duration_cast<std::chrono::milliseconds>(due - now);
+}
+
 void TaskQueueLoop::executeTask()
 {
     std::unique_ptr<Task<std::any>> task;
@@ -51,8 +88,13 @@ void TaskQueueLoop::executeTask()
         {
             return;
         }
-        task = std::move(_queue.front());
-        _queue.pop();
+        auto earliest = _queue.begin();
+        if (earliest->first > Clock::now())
+        {
+            return; // 还没到期的任务不能提前跑（谓词已经挡了一层，这里兜底）
+        }
+        task = std::move(earliest->second);
+        _queue.erase(earliest);
     }
 
     // 在锁外执行任务：任务内部若再次 addTask()，不会造成死锁。

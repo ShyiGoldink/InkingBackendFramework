@@ -1,7 +1,10 @@
 #include "ui/UIMessageLibrary.h"
+#include "thread/TaskQueueLoop.h"
 
+#include <any>
 #include <chrono>
 #include <iostream>
+#include <vector>
 
 std::mutex UIMessageLibrary::_mutex;
 std::condition_variable UIMessageLibrary::_condition;
@@ -11,6 +14,24 @@ void UIMessageLibrary::addMessage(const MessageType &messageType, const float &d
 {
     if (message.empty())
     {
+        return;
+    }
+
+    // 延迟消息不在这里等，而是交给任务队列：
+    // 排一个 delay 之后才执行的任务，任务到点做的唯一一件事就是按"立即"重新入队。
+    // 这样本类保持成一条笨队列，"等"的能力只需要任务队列有。
+    if (delayTime > 0.0f)
+    {
+        const auto delay = std::chrono::milliseconds(
+            static_cast<long long>(static_cast<double>(delayTime) * 1000.0));
+
+        Task<std::any> task;
+        task.action = [messageType, message](const std::vector<std::any> &) -> std::any
+        {
+            addMessage(messageType, 0.0f, message);
+            return {};
+        };
+        TaskQueueLoop::instance().addTask(std::move(task), delay);
         return;
     }
 
@@ -45,4 +66,10 @@ void UIMessageLibrary::waitForMessage(std::chrono::milliseconds timeout)
 {
     std::unique_lock<std::mutex> lock(_mutex);
     _condition.wait_for(lock, timeout, [] { return !_messageQueue.empty(); });
+}
+
+size_t UIMessageLibrary::pendingCount()
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _messageQueue.size();
 }

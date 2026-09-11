@@ -25,6 +25,12 @@ public:
     virtual QueryResult query(const std::string &sql) = 0;
     /**断开链接 */
     virtual QueryResult disconnect() = 0;
+    /** 探活：主动确认这条连接现在还能用，可能产生一次网络往返*/
+    virtual QueryResult ping() = 0;
+    /**连接是否已知损坏：只看本地状态，不做网络往返
+     *上一次操作遇到连接级错误后这里就应该是 true，直到连接被重建
+    */
+    virtual bool isBroken() const = 0;
 
     virtual ~IDatabase() = default;
 };

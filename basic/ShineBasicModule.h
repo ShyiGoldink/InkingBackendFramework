@@ -1,6 +1,7 @@
 #ifndef INKING_BACKEND_FRAMEWORK_BASIC_SHINE_BASIC_MODULE_H
 #define INKING_BACKEND_FRAMEWORK_BASIC_SHINE_BASIC_MODULE_H
 
+#include <mutex>
 #include <string>
 #include <vector>
 #include <optional>
@@ -69,9 +70,17 @@ protected:
     };
 
 private:
+    /** 调用方必须已经持有 _stageMutex */
     Stage *findStage(int step);
     const Stage *findStage(int step) const;
 
+    /**
+     * 保护 _stage 的锁。
+     * 这个基类的设计是"每个函数结尾都写自检状态"，而模块本来就会被多个线程调用
+     * （线程池里每个管家线程都会写自己的状态），没有这把锁的话，
+     * _stage 在扩容时会被两个线程同时移动，直接造成堆损坏。
+     */
+    mutable std::mutex _stageMutex;
     std::vector<Stage> _stage;                               /** 模块的自检阶段表，按 step 升序保存 */
     std::optional<StatusRegisterToken> _statusRegisterToken; /**延迟构造Token */
 };

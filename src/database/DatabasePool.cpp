@@ -1,18 +1,60 @@
 #include "database/DatabasePool.h"
 #include "database/IDatabase.h"
 #include "basic/ShineLog.h"
+#include "thread/TaskQueueLoop.h"
 
 #ifdef INKING_ENABLE_MYSQL
 #include "database/MySQL/MySQLDatabase.h"
 #endif
 
-std::unordered_map<PoolType, std::vector<std::unique_ptr<IDatabase>>> DatabasePool::_pools;
+#include <atomic>
+
+std::unordered_map<PoolType, std::vector<PooledConnection>> DatabasePool::_pools;
 std::unordered_map<PoolType, DatabaseConfig> DatabasePool::_configs;
 std::unordered_map<PoolType, int> DatabasePool::_total;
 std::unordered_map<PoolType, uint64_t> DatabasePool::_generations;
 std::mutex DatabasePool::_mutex;
 std::condition_variable DatabasePool::_condition;
 std::chrono::milliseconds DatabasePool::_borrowTimeout{5000};
+std::chrono::milliseconds DatabasePool::_maxIdleTime{60000};
+std::chrono::milliseconds DatabasePool::_probeIdleThreshold{0}; // 0 = 每次借出都探活
+
+namespace
+{
+constexpr auto kMaintainInterval = std::chrono::seconds(30);/** 后台维护的间隔 */
+constexpr int kMaxIdleAttempts = 4;/** 单次借出最多连续丢弃并重试的坏连接条数 */
+
+/** 后台维护任务只排一次，用这个标志保证不会重复排队 */
+std::atomic<bool> gMaintenanceScheduled{false};
+
+Task<std::any> makeMaintenanceTask();
+
+/** 确保后台维护任务已经排上（只排一次） */
+void ensureMaintenanceScheduled()
+{
+    if (gMaintenanceScheduled.exchange(true))
+    {
+        return;
+    }
+    TaskQueueLoop::instance().addTask(makeMaintenanceTask(), kMaintainInterval);
+}
+
+/**
+ * 后台维护任务：清理所有池里空闲过久的连接，然后把自己排下一次。
+ * 这就是一个跑在线程池里的定时器——不额外起线程，也不占着借出路径。
+ */
+Task<std::any> makeMaintenanceTask()
+{
+    Task<std::any> task;
+    task.action = [](const std::vector<std::any> &) -> std::any
+    {
+        DatabasePool::maintainAllIdle();
+        TaskQueueLoop::instance().addTask(makeMaintenanceTask(), kMaintainInterval);
+        return {};
+    };
+    return task;
+}
+}
 
 // 构造函数，构造成功的同时就取一个指针作为对象
 DatabasePool::DatabasePool(PoolType poolType)
@@ -20,10 +62,40 @@ DatabasePool::DatabasePool(PoolType poolType)
 {
     std::unique_lock<std::mutex> lock(_mutex);
 
-    // 有空闲连接，直接借出
-    if (takeIdleLocked())
+    // 池里的空闲连接可能已经不可用了（服务端杀空闲连接、网络中断），
+    // 所以每次借出都要确认：先看免费的本地标记，再做一次 ping。
+    // ping 有一次网络往返，但它比"借到坏连接再重连"便宜两个数量级，
+    // 所以默认不做省这笔开销的猜测，直接每次都问一遍。
+    for (int attempt = 0; attempt < kMaxIdleAttempts; ++attempt)
     {
-        return;
+        if (!takeIdleLocked())
+        {
+            break; // 没有空闲连接，交给下面的扩容/等待逻辑
+        }
+
+        IDatabase *candidate = _db.get();
+        const auto idleFor = std::chrono::steady_clock::now() - _idleSince;
+        const bool needProbe = idleFor >= _probeIdleThreshold;
+
+        // ping 是一次网络往返，必须在锁外做，否则所有借出会被这条连接串行化
+        lock.unlock();
+        const bool alive = !candidate->isBroken() && (!needProbe || candidate->ping().success);
+        lock.lock();
+
+        if (alive)
+        {
+            return;
+        }
+
+        // 坏连接不回池：断开它、把存活数减一，然后在锁外真正断开，再继续借下一条
+        std::unique_ptr<IDatabase> dead = std::move(_db);
+        if (_total[_poolType] > 0)
+        {
+            --_total[_poolType];
+        }
+        lock.unlock();
+        dead.reset();
+        lock.lock();
     }
 
     // 连接池从未初始化（没有缓存配置），无法按需建连
@@ -103,7 +175,9 @@ bool DatabasePool::takeIdleLocked()
         return false;
     }
 
-    _db = std::move(it->second.back());
+     PooledConnection &pooled = it->second.back();
+     _db = std::move(pooled.database);
+      _idleSince = pooled.idleSince;
     it->second.pop_back();
     _generation = _generations[_poolType]; // 记录本次借出时的池代次
     return true;
@@ -162,16 +236,18 @@ bool DatabasePool::createAndTake(const DatabaseConfig &config, std::unique_lock<
         return false;
     }
 
-    // 建连期间有连接被归还：优先借出归还的连接，把新建的连接放入池中
+    // 建连期间有连接被归还：优先借出归还的连接，把新建的连接放入池中。
+    // 顺手借出的那条不做探活，因为它刚刚才被归还（空闲≈0），按规则本来就轮不到 ping。
     if (takeIdleLocked())
     {
-        _pools[_poolType].push_back(std::move(fresh));
+        _pools[_poolType].push_back(PooledConnection{std::move(fresh), std::chrono::steady_clock::now()});
         _condition.notify_one();
         return true;
     }
 
     _db = std::move(fresh);
     _generation = poolGeneration;
+    _idleSince = std::chrono::steady_clock::now(); // 新建的连接，视作刚刚进入可用状态
     return true;
 }
 
@@ -187,16 +263,21 @@ void DatabasePool::release()
     std::unique_lock<std::mutex> lock(_mutex);
     auto it = _pools.find(_poolType);
 
-    // 只有池还存在、且代次与借用时一致，才允许把连接归还进池；
-    // 旧代次的连接（free() 之后才析构）直接断开，防止进入新配置的池
-    if (it != _pools.end() && _generations[_poolType] == _generation)
+    // 池还在、代次一致，并且这条连接没有被标记为损坏才允许归还。
+    // isBroken() 是零往返的本地判断，不会给归还路径增加网络开销。
+    const bool poolAlive = it != _pools.end() && _generations[_poolType] == _generation;
+    if (poolAlive && !_db->isBroken())
     {
-        it->second.push_back(std::move(_db));
+        it->second.push_back(PooledConnection{std::move(_db), std::chrono::steady_clock::now()});
         _condition.notify_one();
         return;
     }
 
     database = std::move(_db);
+    if (poolAlive && _total[_poolType] > 0)
+    {
+        --_total[_poolType]; // 坏连接不再回池，存活数要相应减一
+    }
     lock.unlock();
 
     database->disconnect();
@@ -211,7 +292,7 @@ std::vector<QueryResult> DatabasePool::init(PoolType poolType, int num, Database
     // 没有该类型的池再进行初始化，否则不进行初始化
     if (_pools.find(poolType) == _pools.end())
     {
-        std::vector<std::unique_ptr<IDatabase>> databasePool;
+        std::vector<PooledConnection> databasePool;
         switch (poolType)
         {
             // 先只完善MySQL的初始化，其它的按需补充
@@ -223,7 +304,7 @@ std::vector<QueryResult> DatabasePool::init(PoolType poolType, int num, Database
                 auto queryResult = mySQL->connect(config.host, config.port, config.userName, config.password, config.databaseName);
                 if (queryResult.success)
                 {
-                    databasePool.push_back(std::move(mySQL));
+                    databasePool.push_back(PooledConnection{std::move(mySQL), std::chrono::steady_clock::now()});
                 }
                 result.push_back(queryResult);
             }
@@ -238,6 +319,7 @@ std::vector<QueryResult> DatabasePool::init(PoolType poolType, int num, Database
             _pools[poolType] = std::move(databasePool);
             _configs[poolType] = config; // 缓存配置，供池空时按需建连
             _total[poolType] = createdCount; // 记录当前存活连接总数
+            ensureMaintenanceScheduled(); // 池建起来了，把空闲清理的后台任务排上
         }
     }
     return result;
@@ -258,7 +340,13 @@ std::vector<QueryResult> DatabasePool::free(PoolType poolType)
 
         ++_generations[poolType]; // 池代次自增：旧借出连接归还时不允许再进入新池
 
-        databases = std::move(it->second);
+        for (auto &pooled : it->second)
+        {
+            if (pooled.database)
+            {
+                databases.push_back(std::move(pooled.database));
+            }
+        }
         _pools.erase(it); // 移除该池
         _configs.erase(poolType);
         _total.erase(poolType);
@@ -286,9 +374,12 @@ std::vector<QueryResult> DatabasePool::freeAll()
         for (auto &pool : _pools)
         {
             ++_generations[pool.first]; // 池代次自增：旧借出连接归还时不允许再进入新池
-            for (auto &database : pool.second)
+            for (auto &pooled : pool.second)
             {
-                databases.push_back(std::move(database));
+                if (pooled.database)
+                {
+                    databases.push_back(std::move(pooled.database));
+                }
             }
         }
 
@@ -347,19 +438,36 @@ int DatabasePool::trimIdle(PoolType poolType)
             return 0;
         }
 
-        // 只保留一般上限内的空闲连接，超出部分移出并在锁外断开
-        int excess = static_cast<int>(it->second.size()) - maxPoolNum;
-        while (excess-- > 0 && !it->second.empty())
-        {
-            databases.push_back(std::move(it->second.back()));
-            it->second.pop_back();
-            ++removed;
+        auto &idle = it->second;
+        const auto now = std::chrono::steady_clock::now();
 
-            auto totalIt = _total.find(poolType);
+        auto totalIt = _total.find(poolType);
+        const auto releaseTotal = [&totalIt]()
+        {
             if (totalIt != _total.end() && totalIt->second > 0)
             {
                 --totalIt->second;
             }
+        };
+
+        // 先按空闲时长淘汰：归还时是 push_back，所以越靠前的连接空闲越久。
+        // 这一步让连接在被服务端/NAT 静默杀掉之前就主动断开，而不是等借出时才发现是坏的。
+        while (!idle.empty() && now - idle.front().idleSince >= _maxIdleTime)
+        {
+            databases.push_back(std::move(idle.front().database));
+            idle.erase(idle.begin());
+            releaseTotal();
+            ++removed;
+        }
+
+        // 再按数量裁：只保留一般上限内的空闲连接，挤出去的是最新归还的那几条
+        int excess = static_cast<int>(idle.size()) - maxPoolNum;
+        while (excess-- > 0 && !idle.empty())
+        {
+            databases.push_back(std::move(idle.back().database));
+            idle.pop_back();
+            releaseTotal();
+            ++removed;
         }
     }
 
@@ -378,4 +486,38 @@ void DatabasePool::setBorrowTimeout(const std::chrono::milliseconds &timeout)
 {
     std::lock_guard<std::mutex> lock(_mutex);
     _borrowTimeout = timeout;
+}
+
+void DatabasePool::setMaxIdleTime(const std::chrono::milliseconds &timeout)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _maxIdleTime = timeout;
+}
+
+void DatabasePool::setProbeIdleThreshold(const std::chrono::milliseconds &threshold)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _probeIdleThreshold = threshold;
+}
+
+int DatabasePool::maintainAllIdle()
+{
+    // 先取出当前有哪些池，再逐个清理。
+    // trimIdle 内部自己会加锁，所以这里不能持着锁去调它。
+    std::vector<PoolType> types;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        types.reserve(_pools.size());
+        for (const auto &pool : _pools)
+        {
+            types.push_back(pool.first);
+        }
+    }
+
+    int removed = 0;
+    for (PoolType type : types)
+    {
+        removed += trimIdle(type);
+    }
+    return removed;
 }

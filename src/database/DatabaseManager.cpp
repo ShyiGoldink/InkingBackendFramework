@@ -77,13 +77,27 @@ void DatabaseManager::initDatabase()
 // 增删改数据库
 void DatabaseManager::execute(PoolType poolType, const std::vector<std::string> &args)
 {
-    DatabasePool databasePool(poolType);
-    auto arg = vTransTos(args);
-    if (!databasePool.valid())
+    const std::string arg = vTransTos(args);
+
+    // 借用连接会抛异常（池没初始化、建连失败、池满等待超时），这里必须接住：
+    // 以前没有这层 try，任何一次借用失败都会把整个进程 terminate 掉。
+    QueryResult result;
+    try
     {
+        DatabasePool databasePool(poolType);
+        if (!databasePool.valid())
+        {
+            return;
+        }
+        result = databasePool->execute(arg);
+    }
+    catch (const std::exception &e)
+    {
+        UIMessageLibrary::quickMessage(false, 0.0f, std::string("借用数据库连接失败: ") + e.what());
+        setStageStatus(STAGE_EXECUTE_DATABASE, "增/删/改数据库", false, e.what());
         return;
     }
-    QueryResult result = databasePool->execute(arg);
+
     const std::string text = result.toString();
     const char *msg = text.c_str();
     UIMessageLibrary::quickMessage(result.success, 0.0f, msg);
@@ -93,13 +107,36 @@ void DatabaseManager::execute(PoolType poolType, const std::vector<std::string> 
 // 查数据库
 void DatabaseManager::query(PoolType poolType, const std::vector<std::string> &args)
 {
-    DatabasePool databasePool(poolType);
-    auto arg = vTransTos(args);
-    if (!databasePool.valid())
+    const std::string arg = vTransTos(args);
+
+    // 读操作是幂等的，碰到连接级错误可以换一条连接再试一次。
+    // 增删改不能这样做：失败可能发生在"服务端已经提交、响应包在回程丢了"之后，
+    // 重试会写两次。每次尝试各自一个作用域，前一个 pool 对象先析构，
+    // 那条坏连接才会在 release() 里被丢弃，下一次借到的是干净的连接。
+    QueryResult result;
+    try
     {
+        for (int attempt = 0; attempt < 2; ++attempt)
+        {
+            DatabasePool databasePool(poolType);
+            if (!databasePool.valid())
+            {
+                return;
+            }
+            result = databasePool->query(arg);
+            if (result.success || result.errorKind != ErrorKind::Connection)
+            {
+                break;
+            }
+        }
+    }
+    catch (const std::exception &e)
+    {
+        UIMessageLibrary::quickMessage(false, 0.0f, std::string("借用数据库连接失败: ") + e.what());
+        setStageStatus(STAGE_QUERY_DATABASE, "查数据库", false, e.what());
         return;
     }
-    QueryResult result = databasePool->query(arg);
+
     const std::string text = result.toString();
     const char *msg = text.c_str();
     UIMessageLibrary::quickMessage(result.success, 0.0f, msg);
