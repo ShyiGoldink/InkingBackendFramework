@@ -32,6 +32,164 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/third_party/replxx)
 # MySQL 开关：关闭时不编译 MySQL 后端
 option(INKING_ENABLE_MYSQL "Enable MySQL database backend" OFF)
 
+# ------------------------------------------------------------------
+# protobuf 开关
+# 先使用机器上已经安装的 protobuf（版本由使用者决定，运行库与 protoc 同版本）；
+# 找不到时，CMake 自动按 INKING_PROTOBUF_TAG 下载 protobuf 源码，
+# 和本工程一起编译（Abseil 由 protobuf 自己拉取，补丁见 cmake/PatchProtobufBundled.cmake）。
+# 源码只落在构建目录，不进仓库。
+# ------------------------------------------------------------------
+option(INKING_ENABLE_PROTOBUF "Enable protobuf protocol layer" ON)
+set(INKING_PROTOBUF_SOURCE "auto" CACHE STRING
+    "protobuf 来源：auto = 先用本机已安装的，没有就下载源码一起编译；system = 只用本机已安装的；fetch = 总是下载源码")
+set_property(CACHE INKING_PROTOBUF_SOURCE PROPERTY STRINGS auto system fetch)
+set(INKING_PROTOBUF_TAG "v33.4" CACHE STRING
+    "下载 protobuf 源码时使用的版本标签（github tag），例如 v33.4")
+
+if(INKING_ENABLE_PROTOBUF)
+    # 本地路径覆盖与 MySQL 共用 cmake/CMakeUserPaths.cmake，例如：
+    #   set(Protobuf_ROOT "/your/protobuf")
+    #   list(APPEND CMAKE_PREFIX_PATH "/your/protobuf")
+    set(INKING_USER_PATHS_FILE
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CMakeUserPaths.cmake"
+        CACHE FILEPATH "User local dependency path overrides"
+    )
+    if(EXISTS "${INKING_USER_PATHS_FILE}")
+        include("${INKING_USER_PATHS_FILE}")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/CMakeUserPaths.cmake")
+        include("${CMAKE_CURRENT_SOURCE_DIR}/CMakeUserPaths.cmake")
+    endif()
+
+    set(INKING_PROTOBUF_READY FALSE)
+
+    # 第一步：机器上已经安装的 protobuf。
+    # 优先用官方 CMake 包（自己编译安装或 vcpkg 提供的都是这种），
+    # 找不到时退回 CMake 自带的 FindProtobuf 模块。
+    if(NOT INKING_PROTOBUF_SOURCE STREQUAL "fetch")
+        find_package(Protobuf CONFIG QUIET)
+        if(NOT Protobuf_FOUND)
+            find_package(Protobuf MODULE QUIET)
+        endif()
+        if(Protobuf_FOUND)
+            set(INKING_PROTOBUF_READY TRUE)
+            message(STATUS "protobuf 来源：本机已安装")
+        endif()
+    endif()
+
+    # 第二步：没有装 protobuf 时，下载源码并和本工程一起编译。
+    # 源码与编译产物都只放在构建目录里，不会进入源码树。
+    if(NOT INKING_PROTOBUF_READY AND NOT INKING_PROTOBUF_SOURCE STREQUAL "system")
+        include(FetchContent)
+        message(STATUS "protobuf 来源：下载 ${INKING_PROTOBUF_TAG} 源码并随工程一起编译")
+
+        set(protobuf_BUILD_TESTS OFF CACHE BOOL "protobuf: disable tests" FORCE)
+        set(protobuf_BUILD_CONFORMANCE OFF CACHE BOOL "protobuf: disable conformance tests" FORCE)
+        set(protobuf_BUILD_EXAMPLES OFF CACHE BOOL "protobuf: disable examples" FORCE)
+        set(protobuf_INSTALL OFF CACHE BOOL "protobuf: disable install rules" FORCE)
+        set(protobuf_BUILD_SHARED_LIBS OFF CACHE BOOL "protobuf: build static libraries" FORCE)
+        # libprotoc 会链接 libupb，因此保留 upb 的编译
+        set(protobuf_BUILD_LIBUPB ON CACHE BOOL "protobuf: build libupb" FORCE)
+        # 保留 protoc，用于把 proto/ 下的 .proto 生成 C++ 代码
+        set(protobuf_BUILD_PROTOC_BINARIES ON CACHE BOOL "protobuf: build protoc" FORCE)
+        set(protobuf_WITH_ZLIB OFF CACHE BOOL "protobuf: build without zlib" FORCE)
+
+        # 用 git 拉取而不是 URL 下载：git 自带证书配置，不依赖 CMake 下载器的 CA 设置，
+        # 也方便在内网/代理环境下复用使用者已有的 git 配置。
+        FetchContent_Declare(protobuf
+            GIT_REPOSITORY https://github.com/protocolbuffers/protobuf.git
+            GIT_TAG ${INKING_PROTOBUF_TAG}
+            GIT_SHALLOW TRUE
+            PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchProtobufBundled.cmake
+        )
+        FetchContent_MakeAvailable(protobuf)
+
+        set(INKING_PROTOBUF_READY TRUE)
+        set(Protobuf_INCLUDE_DIRS ${protobuf_SOURCE_DIR}/src ${protobuf_BINARY_DIR}/src)
+        # 源码版本就是下载时使用的 tag，去掉前缀 v 后与 protoc --version 的写法一致
+        string(REGEX REPLACE "^v" "" INKING_PROTOBUF_TAG_VERSION "${INKING_PROTOBUF_TAG}")
+        set(Protobuf_VERSION "${INKING_PROTOBUF_TAG_VERSION}")
+    endif()
+
+    if(NOT INKING_PROTOBUF_READY)
+        message(FATAL_ERROR
+            "没有可用的 protobuf。\n"
+            "当前 INKING_PROTOBUF_SOURCE=${INKING_PROTOBUF_SOURCE}，只允许使用本机已安装的 protobuf，但没有找到。\n"
+            "常见安装方式：\n"
+            "  MSYS2 UCRT64: pacman -S mingw-w64-ucrt-x86_64-protobuf\n"
+            "  macOS:        brew install protobuf\n"
+            "  Ubuntu:       apt install libprotobuf-dev protobuf-compiler\n"
+            "如果 protobuf 装在自定义目录，创建 cmake/CMakeUserPaths.cmake 后写：\n"
+            "  set(Protobuf_ROOT \"/your/protobuf\")\n"
+            "也可以改成自动下载源码一起编译：-DINKING_PROTOBUF_SOURCE=auto\n"
+            "暂时不需要协议层时，配置时加上：-DINKING_ENABLE_PROTOBUF=OFF\n")
+    endif()
+
+    # 统一成两个变量：库目标 + protoc 命令，兼容 CONFIG 与 MODULE 两种查找结果
+    if(TARGET protobuf::libprotobuf)
+        set(INKING_PROTOBUF_LIBRARY protobuf::libprotobuf)
+    else()
+        set(INKING_PROTOBUF_LIBRARY ${Protobuf_LIBRARIES})
+    endif()
+
+    if(TARGET protobuf::protoc)
+        set(INKING_PROTOC_COMMAND $<TARGET_FILE:protobuf::protoc>)
+        set(INKING_PROTOC_DEPENDENCY protobuf::protoc)
+    else()
+        set(INKING_PROTOC_COMMAND ${Protobuf_PROTOC_EXECUTABLE})
+        set(INKING_PROTOC_DEPENDENCY ${Protobuf_PROTOC_EXECUTABLE})
+    endif()
+
+    message(STATUS "protobuf include dirs: ${Protobuf_INCLUDE_DIRS}")
+    message(STATUS "protobuf library: ${INKING_PROTOBUF_LIBRARY}")
+    message(STATUS "protoc: ${INKING_PROTOC_COMMAND}")
+    if(Protobuf_VERSION)
+        message(STATUS "protobuf version: ${Protobuf_VERSION}")
+    endif()
+endif()
+
+# ------------------------------------------------------------------
+# .proto 代码生成
+# proto/ 下的全部 .proto 由使用者提供的 protoc 生成 C++ 代码，
+# 生成结果只落在构建目录中，不进入源码树。
+# ------------------------------------------------------------------
+if(INKING_ENABLE_PROTOBUF)
+    set(INKING_PROTO_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/proto)
+    set(INKING_PROTO_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+
+    file(GLOB_RECURSE INKING_PROTO_FILES CONFIGURE_DEPENDS ${INKING_PROTO_ROOT_DIR}/*.proto)
+    if(NOT INKING_PROTO_FILES)
+        message(FATAL_ERROR "在 ${INKING_PROTO_ROOT_DIR} 下没有找到任何 .proto 文件")
+    endif()
+
+    set(INKING_PROTO_GENERATED_SOURCES)
+    foreach(INKING_PROTO_FILE ${INKING_PROTO_FILES})
+        file(RELATIVE_PATH INKING_PROTO_RELATIVE ${INKING_PROTO_ROOT_DIR} ${INKING_PROTO_FILE})
+        get_filename_component(INKING_PROTO_SUBDIR ${INKING_PROTO_RELATIVE} DIRECTORY)
+        get_filename_component(INKING_PROTO_NAME ${INKING_PROTO_FILE} NAME_WE)
+
+        set(INKING_PB_CC ${INKING_PROTO_OUT_DIR}/${INKING_PROTO_SUBDIR}/${INKING_PROTO_NAME}.pb.cc)
+        set(INKING_PB_H ${INKING_PROTO_OUT_DIR}/${INKING_PROTO_SUBDIR}/${INKING_PROTO_NAME}.pb.h)
+
+        add_custom_command(
+            OUTPUT ${INKING_PB_CC} ${INKING_PB_H}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${INKING_PROTO_OUT_DIR}/${INKING_PROTO_SUBDIR}
+            COMMAND ${INKING_PROTOC_COMMAND}
+                    --proto_path=${INKING_PROTO_ROOT_DIR}
+                    --cpp_out=${INKING_PROTO_OUT_DIR}
+                    ${INKING_PROTO_FILE}
+            DEPENDS ${INKING_PROTO_FILE} ${INKING_PROTOC_DEPENDENCY}
+            COMMENT "生成 protobuf 代码: ${INKING_PROTO_RELATIVE}"
+            VERBATIM
+        )
+        list(APPEND INKING_PROTO_GENERATED_SOURCES ${INKING_PB_CC})
+    endforeach()
+
+    # 生成代码单独编成一个静态库，业务代码通过链接它来使用消息类型
+    add_library(inking_proto STATIC ${INKING_PROTO_GENERATED_SOURCES})
+    target_include_directories(inking_proto PUBLIC ${INKING_PROTO_OUT_DIR} ${Protobuf_INCLUDE_DIRS})
+    target_link_libraries(inking_proto PUBLIC ${INKING_PROTOBUF_LIBRARY})
+endif()
+
 #变量声明：源代码在：src/main.cpp等
 set(INKING_SOURCES
     src/main.cpp
@@ -44,6 +202,7 @@ set(INKING_SOURCES
     src/command/CommandRegistrant.cpp
     src/database/DatabaseManager.cpp
     src/database/DatabasePool.cpp
+    src/protocol/FrameCodec.cpp
     src/tool/FuzzyMatchTool.cpp
     src/tool/PasswordTool.cpp
     src/tool/JsonTool.cpp
@@ -82,6 +241,14 @@ target_link_libraries(
     PRIVATE
         replxx
 )
+
+if(TARGET inking_proto)
+    target_link_libraries(
+        InkingBackendFramework
+        PRIVATE
+            inking_proto
+    )
+endif()
 
 target_compile_features(
 	InkingBackendFramework

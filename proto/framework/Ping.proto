@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package inking.framework;
+
+// 心跳消息。
+//
+// 说明：这是接入 protobuf 之后的第一份消息定义，用来跑通
+// 「.proto -> 生成 C++ 代码 -> 链接进可执行程序」这条链路。
+// 后面按「一种数据一个 message」的约定扩展时，可以按业务域分文件，
+// 也可以按命令拆成独立文件，由命令映射表统一注册。
+
+// 心跳请求
+message Ping
+{
+    int64 timestampMs = 1; // 发送时刻，Unix 毫秒
+}
+
+// 心跳响应
+message Pong
+{
+    int64 timestampMs = 1; // 回包时刻，Unix 毫秒
+}
