@@ -45,7 +45,10 @@ void TaskQueueLoop::addTask(Task<std::any> task, std::chrono::milliseconds delay
         std::lock_guard<std::mutex> lock(_mutex);
         _queue.emplace(Clock::now() + delay, std::make_unique<Task<std::any>>(std::move(task)));
     }
-    // 唤醒管家线程处理新任务
+    // 只叫醒一个管家线程：一条任务只需要一个执行者。
+    // 真有 N 条任务同时入队时，是 N 次入队各叫醒一个人，不会因为"只叫一个"而积压；
+    // 如果需要更多人手（比如在跑的管家线程已经很多），管家线程干完手里的活
+    // 回到循环顶部会重新判断谓词，自己把队列里的下一件活取走。
     _threadLoop->wake();
 }
 

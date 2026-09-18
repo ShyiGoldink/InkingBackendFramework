@@ -1,4 +1,5 @@
 #include "thread/ThreadPool.h"
+#include "basic/ShineLog.h"
 
 namespace
 {   constexpr int STAGE_INIT_THREAD_POOL = 1;
@@ -13,6 +14,12 @@ ThreadPool::ThreadPool(){
 
 void ThreadPool::init(std::function<bool()> predicate, std::function<void()> execute,
                       std::function<std::chrono::milliseconds()> waitHint){
+    //线程数组是定长的，重复初始化会把已经跑起来的线程对象覆盖掉，
+    //那些线程再也没人 join，析构时直接 terminate。这里挡掉第二次。
+    if(_threads[0]){
+        setStageStatus(STAGE_INIT_THREAD_POOL,"创建线程池",false,"线程池已经初始化过，忽略这次重复初始化");
+        return;
+    }
     if(predicate)_predicateCallback = predicate;
     if(execute)_executeCallback = execute;
     if(waitHint)_waitHintCallback = waitHint;
@@ -38,16 +45,29 @@ void ThreadPool::butler(){
     //管家函数，处理循环
     while (true)
     {
+        //每一轮都在锁内先看一次"有没有活"，再决定睡不睡。
+        //
+        //这个顺序不只是为了少睡一次：谓词读的是别处的状态（比如任务队列），
+        //保护它的锁和这把 _mutex 不是同一把。通知方 wake()/wakeAll() 会先取一次
+        //_mutex 再通知，于是"判断完谓词、还没阻塞"这段窗口里到达的通知，
+        //要么已经被这次判断看见，要么让本线程已经在条件变量上排好队等着被叫，
+        //两种情况都不会丢通知。
+        //
+        //反过来，"先睡一觉、醒了再看"就要为每条已经到手的任务先付出一次睡眠，
+        //并且每次被叫醒都要重新判断一遍谓词，白跑一轮。
+        std::unique_lock<std::mutex> lock(_mutex);
         if (_isQuit)
         {
             break;
         }
-        std::unique_lock<std::mutex> lock(_mutex);
-        // 使用条件变量等待，避免CPU空转。
-        // 唤醒条件：退出标志已置位，或谓词（例如“队列非空”）成立。
-        // 必须把 _isQuit 纳入条件，否则 quit() 后 join() 会永久阻塞。
-        const auto ready = [this]()
-        { return _isQuit || (_predicateCallback && _predicateCallback()); };
+        //有活就立刻干，绝不为一件已经到手的活先睡一觉。抢不到活（队列刚被
+        //别的管家线程清空）就回循环顶部重新判断，也是往下走而不是硬睡。
+        if (_predicateCallback())
+        {
+            lock.unlock();
+            executeGuarded();
+            continue;
+        }
         if (_waitHintCallback)
         {
             // 带超时地等：延迟任务到点时不会有人 notify，只能靠超时醒来。
@@ -56,25 +76,24 @@ void ThreadPool::butler(){
             // 在被通知之后会"复用同一个时长"：条件还不成立就拿着旧时长再睡一轮。
             // 那样一来，新任务入队的通知只会让线程把原来那段长觉重新睡满
             // （比如本来算出来可以睡 1 小时，通知到达后它又睡 1 小时）。
-            // 不带谓词则一定会返回，回到循环顶部重新计算该睡多久。
-            _cv.wait_for(lock, _waitHintCallback());
+            //
+            // 睡多久必须在锁内、并且在上面那次判断之后重新算：退出锁再算，
+            // 算出来的可能是别人已经处理过的旧状态。
+            const auto hint = _waitHintCallback();
+            if (hint <= std::chrono::milliseconds::zero())
+            {
+                //刚判完就有活到期，或者刚算完就被别人抢空，回顶部重新判断，
+                //不在这里睡，也不在这里空转（顶部会立刻取到任务或算出新的时长）。
+                continue;
+            }
+            _cv.wait_for(lock, hint);
         }
         else
         {
-            _cv.wait(lock, ready);
+            // 没有定时需求就睡到有人唤醒；被唤醒后由循环顶部重新判断谓词，
+            // 条件变量的虚假唤醒也交给这个循环消化。
+            _cv.wait(lock);
         }
-        if (_isQuit)
-        {
-            break;
-        }
-        // 超时或被唤醒之后再看一眼是不是真该干活了；
-        // 不该干就回到循环顶部重新算等待时长，而不是继续睡原来那一段。
-        if (_waitHintCallback && !_predicateCallback())
-        {
-            continue;
-        }
-        lock.unlock();
-        _executeCallback();
     }
 }
 
@@ -95,7 +114,24 @@ void ThreadPool::wake(){
     {
         std::lock_guard<std::mutex> lock(_mutex);
     }
-    _cv.notify_all(); // 有新任务入队时唤醒管家线程
+    _cv.notify_one(); // 一条任务就叫一个人，不做全员唤醒
+}
+
+void ThreadPool::wakeAll(){
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+    }
+    _cv.notify_all();
+}
+
+void ThreadPool::executeGuarded(){
+    try{
+        _executeCallback();
+    }catch(const std::exception &exception){
+        ShineLog::error("ThreadPool",std::string("管家线程执行任务抛出异常：")+exception.what());
+    }catch(...){
+        ShineLog::error("ThreadPool","管家线程执行任务抛出未知异常");
+    }
 }
 
 ThreadPool::~ThreadPool(){

@@ -44,8 +44,20 @@ void init(std::function<bool()> predicate,std::function<void()> execute,
           std::function<std::chrono::milliseconds()> waitHint = {});
 /**线程池关闭函数 */
 void quit();
-/**唤醒正在等待的管家线程，例如新任务入队后调用 */
+/**
+ * @brief 唤醒一个正在等待的管家线程，例如新任务入队后调用。
+ *
+ * 一条任务只需要一个管家线程来处理，所以这里只叫醒一个：
+ * 以前这里是 notify_all，入队一次会把全部管家线程叫醒，其中若干个发现没活干
+ * 再睡回去，每次入队都要付出"全员唤醒 + 全员重新判断"的代价，任务一密集，
+ * CPU 就烧在调度上了。
+ * 叫醒数量跟上不会有副作用：真有 N 条任务同时到达时，是 N 次入队各叫醒一个人；
+ * 而"全部线程都在干活、队列里还有积压"这种情况，管家线程干完手里的活
+ * 回到循环顶部会重新判断，不会漏掉任务。
+ */
 void wake();
+/**唤醒全部管家线程：只在退出这类"必须让每个线程都重新看一眼"的场合调用 */
+void wakeAll();
 
 std::string moduleName()const override{
     return "ThreadPool";
@@ -65,6 +77,13 @@ std::atomic<int> _stage;/*一个小辅助数，用于给次注册管家函数添
 void release();
 /**管理函数，线程出生起就要执行这个函数，这个函数负责管理线程 */
 void butler();
+/**
+ * @brief 执行一次注入的执行体，并兜住异常。
+ *
+ * 管家线程是长驻的，执行体抛出异常若一路逃逸出去，这条线程会被 std::terminate
+ * 干掉，线程池会静默地少一个工人，之后所有任务的处理能力永久下降。
+ */
+void executeGuarded();
 
 };
 
