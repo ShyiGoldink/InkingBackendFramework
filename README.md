@@ -71,6 +71,17 @@ So a machine without protobuf still builds. The first configure needs network ac
 `git`, so your existing proxy/credential configuration applies. Nothing is written into the source tree: both the
 cloned sources and the build output stay under `build/`.
 
+If that clone fails with `Error in the HTTP2 framing layer` (a proxy or NAT in the way breaking HTTP/2 frames),
+make just this one command speak HTTP/1.1 instead of changing anything permanently:
+
+```bash
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.version GIT_CONFIG_VALUE_0=HTTP/1.1 \
+  cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+```
+
+`git config --global http.version HTTP/1.1` does the same thing for every git command. Once the clone has
+succeeded the sources stay in `build/_deps/`, so later configures do not need the network at all.
+
 ### 3.2 Choosing where protobuf comes from
 
 | `-DINKING_PROTOBUF_SOURCE=` | Behaviour |
@@ -234,6 +245,11 @@ On a machine without protobuf the first configure downloads and patches the prot
 verified machine), and the first build additionally compiles protobuf and Abseil (a few minutes). Later builds are
 incremental.
 
+That first build is the memory-hungry one: protobuf and Abseil are a few hundred translation units, and
+`--parallel` with no number uses every core. On a 16 GB machine that is enough to get the compiler killed
+mid-build. Give it a number instead — `cmake --build build --parallel 4` — the first time; incremental builds
+of this project itself are tiny and can go back to `--parallel`.
+
 The executable asks for a console password at startup (five attempts, hash checked in `src/tool/PasswordTool.cpp`)
 before it starts the rest of the framework, then drops into the command prompt where `help` lists the available
 commands. Running it from a script without an interactive terminal will not get past the password prompt.
@@ -287,6 +303,7 @@ Implemented in `include/protocol/ProtocolFrame.h`, `include/protocol/FrameCodec.
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | Configure fails while downloading protobuf, mentions SSL / CA certificate or a network error | CMake cannot reach GitHub through git | make `git clone https://github.com/protocolbuffers/protobuf.git` work in your shell (proxy, credentials), or install protobuf and use `-DINKING_PROTOBUF_SOURCE=system` |
+| Same, but the error says `Error in the HTTP2 framing layer`, or a git clone that works elsewhere times out here | git speaks HTTP/2 and something between you and GitHub breaks those frames | retry that one configure with `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.version GIT_CONFIG_VALUE_0=HTTP/1.1` in front of it ([section 3.1](#31-what-the-default-build-does)) |
 | Configure fails with "没有可用的 protobuf" | `INKING_PROTOBUF_SOURCE=system` but nothing is installed | install protobuf ([section 3.4](#34-install-your-own-protobuf)) or use the default `auto` |
 | `protoc` runs in the shell but the build does not use it | only the compiler is installed, no headers/runtime | install the full development package, or keep the downloaded protobuf |
 | Linker errors mentioning protobuf | protobuf built for a different ABI (MSVC vs MinGW) or a different version | use the protobuf that matches the compiler you configure with |
