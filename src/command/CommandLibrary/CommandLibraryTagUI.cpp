@@ -52,6 +52,18 @@ std::vector<Command> CommandLibrary::uiCommands() const
                      const auto &stages = module->getStage();
                      for (const auto &stage : stages)
                      {
+                         // 只用 setStageDetail 登记过、函数还没跑到的阶段是没有名字的，
+                         // 这种阶段既不能说"通过"也没有内容可说，单独显示成"未运行"。
+                         const bool neverRan = stage.name.empty();
+                         if (neverRan)
+                         {
+                             const std::string label = !stage.description.empty()
+                                                           ? stage.description
+                                                           : "阶段 " + std::to_string(stage.step);
+                             statusBuilder << "  [未运行] " << label << "\n";
+                             continue;
+                         }
+
                          statusBuilder << "  [" << (stage.status ? "通过" : "失败") << "] "
                                        << stage.name << " - " << stage.message;
                          if (!stage.status)

@@ -121,7 +121,8 @@ const Stage *ShineBasicModule::findStage(int step) const
 void ShineBasicModule::sayMyName() const
 {
     std::ostringstream builder;
-    builder << "[" << moduleName() << "@ 0x" << std::hex << (void *)this << std::dec << "]";
+    // 指针打印出来本来就带 0x 前缀，这里再写一个就成了 0x0x7ffe...
+    builder << "[" << moduleName() << "@ " << static_cast<const void *>(this) << "]";
     const std::string text = builder.str();
     UIMessageLibrary::addMessage(MessageType::normal, 0.0f, text);
 }
