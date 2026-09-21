@@ -38,6 +38,9 @@ Thumbs.db
 *.log
 *.tmp
 *.temp
+# 运行期日志：可执行文件同级的 LOG/<日期>/<时间>.html
+/LOG/
+/Log.html
 
 # Local env/config
 # 开发期验证程序：里面硬编码了本机数据库的账号密码，不进版本库

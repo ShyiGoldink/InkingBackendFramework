@@ -334,3 +334,9 @@ config/        Runtime configuration template (databaseConfig.json)
 cmake/         CMake helper scripts, patches/ for protobuf, CMakeUserPaths.cmake for local path overrides (git-ignored)
 build/         Build output, including the downloaded protobuf source under build/_deps/ (git-ignored)
 ```
+
+At runtime the self-check log goes to `LOG/` next to the executable: one folder per day, one HTML file per run,
+for example `LOG/2026-09-21/13-57-44.html`. A run that crosses midnight opens a new file in the new day's folder,
+and two runs that start in the same second get `-1`, `-2` suffixes instead of overwriting each other. Nothing is
+ever appended to an older run's file, so no single log file grows without bound. Both `LOG/` and the old
+single-file `Log.html` are git-ignored.

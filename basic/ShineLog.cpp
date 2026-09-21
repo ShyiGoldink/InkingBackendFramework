@@ -16,12 +16,15 @@
 #include <unistd.h>
 #endif
 
-bool ShineLog::_checked = false;
 std::mutex ShineLog::_mutex;
-bool ShineLog::_sessionStarted = false;
+std::string ShineLog::_currentDay;
+std::string ShineLog::_currentFile;
 
 namespace
 {
+    /** 日志根目录的名字：可执行文件同级的 LOG/ */
+    constexpr const char *kLogRootFolder = "LOG";
+
     std::string directoryOf(const std::string &filePath)
     {
         const std::size_t lastSlash = filePath.find_last_of("/\\");
@@ -32,13 +35,6 @@ namespace
 
         return filePath.substr(0, lastSlash);
     }
-
-    std::string logPathBesideExecutable(const std::string &executablePath)
-    {
-        return directoryOf(executablePath) + "/Log.html";
-    }
-
-    constexpr const char *kLogVersionMarker = "INKING-LOG-V2";
 
     const char *logPageHeader()
     {
@@ -346,63 +342,82 @@ void ShineLog::error(const std::string &moduleName, const std::string &message)
     writeLine(moduleName, message, Color::Red);
 }
 
-void ShineLog::ensureLogFile()
+void ShineLog::openLogFile(const std::string &day, const std::string &stamp)
 {
-    if (_checked)
-    {
-        return;
-    }
-
-    const std::string path = logFilePath();
+    // 目录：LOG/<天>。建不出来（权限、只读盘之类）就退到当前目录，退不了就不写。
     std::error_code ec;
-    const bool exists = std::filesystem::exists(path, ec);
-
-    // 旧版日志先备份再重建，避免历史记录丢失
-    if (exists && std::filesystem::file_size(path, ec) > 0 && !fileUsesNewFormat(path))
+    const std::string preferredDirectory = logRootDirectory() + "/" + day;
+    std::filesystem::create_directories(preferredDirectory, ec);
+    std::string directory = ec ? (std::string(".") + "/" + kLogRootFolder + "/" + day) : preferredDirectory;
+    if (ec)
     {
-        std::error_code renameError;
-        std::filesystem::rename(path, legacyPathFor(path), renameError);
-        if (renameError)
+        std::error_code fallbackError;
+        std::filesystem::create_directories(directory, fallbackError);
+        if (fallbackError)
         {
-            std::ofstream truncate(path, std::ios::trunc | std::ios::binary);
+            directory = ".";
         }
     }
 
-    // 不存在或刚重建时，写入新版页面头部
-    if (!std::filesystem::exists(path, ec) || std::filesystem::file_size(path, ec) == 0)
+    // 文件名用启动时刻；同一秒起了两个进程就顺延编号，不覆盖别人的日志。
+    std::string name = stamp.substr(11); // "13:55:02" -> 文件名里不能有冒号
+    for (char &ch : name)
     {
-        std::ofstream output(path, std::ios::out | std::ios::binary);
-        output << logPageHeader();
+        if (ch == ':')
+            ch = '-';
     }
 
-    _checked = true;
+    std::string path = directory + "/" + name + ".html";
+    for (int suffix = 1; suffix < 1000 && std::filesystem::exists(path, ec); ++suffix)
+    {
+        path = directory + "/" + name + "-" + std::to_string(suffix) + ".html";
+    }
+
+    std::ofstream output(path, std::ios::out | std::ios::binary);
+    if (!output)
+    {
+        // 这一份建不出来：留着空路径，下一行日志会再试一次
+        _currentDay = day;
+        _currentFile.clear();
+        return;
+    }
+
+    // 一份文件 = 一天 × 一次运行，所以页面骨架、当天标题、会话标题在这里一次写完
+    output << logPageHeader();
+    output << "<h2 class=\"day\" data-day=\"" << day << "\">日期 // " << day << "</h2>\n";
+    output << "<h3 class=\"session\">会话 // " << escapeHtml(stamp) << "</h3>\n";
+
+    _currentDay = day;
+    _currentFile = path;
 }
 
 void ShineLog::writeLine(const std::string &moduleName, const std::string &message, Color color)
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    ensureLogFile();
 
-    const std::string path = logFilePath();
-    std::ofstream output(path, std::ios::app | std::ios::binary);
-
-    // 本次进程第一次写日志时，补上“天”与“启动会话”两个分组标题
-    if (!_sessionStarted)
+    const std::string stamp = nowTime();
+    const std::string day = stamp.substr(0, 10);
+    // 第一次写日志，或者程序跨过零点跑到了新的一天：换一份新文件
+    if (_currentFile.empty() || day != _currentDay)
     {
-        const std::string day = nowTime().substr(0, 10);
-        if (!dayHeaderExists(path, day))
+        openLogFile(day, stamp);
+        if (_currentFile.empty())
         {
-            output << "<h2 class=\"day\" data-day=\"" << day << "\">日期 // " << day << "</h2>\n";
+            return;
         }
-        output << "<h3 class=\"session\">会话 // " << escapeHtml(nowTime()) << "</h3>\n";
-        _sessionStarted = true;
+    }
+
+    std::ofstream output(_currentFile, std::ios::app | std::ios::binary);
+    if (!output)
+    {
+        return;
     }
 
     const char *tag = color == Color::Green ? "通过" : (color == Color::Red ? "错误" : "日志");
     output
         << "<p class=\"entry " << colorName(color) << "\">"
         << "<span class=\"time\">"
-        << "[" << escapeHtml(nowTime()) << "]"
+        << "[" << escapeHtml(stamp) << "]"
         << "</span>"
         << "<span class=\"tag\">[" << tag << "]</span>"
         << "<span class=\"module\">[" << escapeHtml(moduleName) << "]</span> "
@@ -442,14 +457,15 @@ std::string ShineLog::nowTime()
     return output.str();
 }
 
-std::string ShineLog::logFilePath()
+std::string ShineLog::logRootDirectory()
 {
+    std::string directory;
 #ifdef _WIN32
     std::vector<char> buffer(MAX_PATH);
     const DWORD size = GetModuleFileNameA(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
     if (size > 0)
     {
-        return logPathBesideExecutable(std::string(buffer.data(), size));
+        directory = directoryOf(std::string(buffer.data(), size));
     }
 #elif defined(__APPLE__)
     uint32_t size = 0;
@@ -457,7 +473,7 @@ std::string ShineLog::logFilePath()
     std::vector<char> buffer(size);
     if (_NSGetExecutablePath(buffer.data(), &size) == 0)
     {
-        return logPathBesideExecutable(buffer.data());
+        directory = directoryOf(buffer.data());
     }
 #else
     std::vector<char> buffer(4096);
@@ -465,46 +481,17 @@ std::string ShineLog::logFilePath()
     if (size > 0)
     {
         buffer[static_cast<std::size_t>(size)] = '\0';
-        return logPathBesideExecutable(buffer.data());
+        directory = directoryOf(buffer.data());
     }
 #endif
 
-    return "Log.html";
-}
-
-bool ShineLog::fileUsesNewFormat(const std::string &path)
-{
-    std::ifstream input(path, std::ios::binary);
-    std::string head(256, '\0');
-    input.read(head.data(), static_cast<std::streamsize>(head.size()));
-    return head.find(kLogVersionMarker) != std::string::npos;
-}
-
-bool ShineLog::dayHeaderExists(const std::string &path, const std::string &day)
-{
-    std::ifstream input(path, std::ios::binary);
-    input.seekg(0, std::ios::end);
-    const std::streamoff fileSize = input.tellg();
-    constexpr std::streamoff kTailBytes = 16384;
-    const std::streamoff offset = fileSize > kTailBytes ? fileSize - kTailBytes : 0;
-    input.seekg(offset);
-
-    std::string tail(static_cast<std::size_t>(fileSize - offset), '\0');
-    input.read(tail.data(), static_cast<std::streamsize>(tail.size()));
-    return tail.find("data-day=\"" + day + "\"") != std::string::npos;
-}
-
-std::string ShineLog::legacyPathFor(const std::string &path)
-{
-    std::string safe = nowTime();
-    for (char &ch : safe)
+    // 取不到可执行文件路径时退到当前目录，至少日志不会丢
+    if (directory.empty())
     {
-        if (ch == ':' || ch == ' ')
-        {
-            ch = '-';
-        }
+        directory = ".";
     }
-    return directoryOf(path) + "/Log_legacy_" + safe + ".html";
+
+    return directory + "/" + kLogRootFolder;
 }
 
 std::string ShineLog::escapeHtml(const std::string &text)

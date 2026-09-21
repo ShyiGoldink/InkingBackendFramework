@@ -7,9 +7,14 @@
 /**
  * @brief ShineBasicModule 使用的静态日志工具。
  *
- * 日志会写入可执行文件同级目录下的 Log.html。
- * 页面按“天”和“程序启动会话”分组展示日志，便于翻阅。
- * 第一次写入时会检查文件是否存在；如果不存在，就创建带样式的网页。
+ * 存放位置：可执行文件同级的 LOG/ 目录下，一天一个文件夹，一次运行一个网页：
+ *
+ *   <可执行文件目录>/LOG/<年-月-日>/<时-分-秒>.html
+ *
+ * 这样单文件不会无限增长：翻起来按天归类，出问题先定位到哪一天、哪一次运行。
+ * 文件名撞车时（同一秒起了两个进程）自动加 -1、-2 后缀。
+ * 程序跨零点还在跑的话，写到新的一天时会自动切到新文件夹里的新文件。
+ * 页面内部仍按“天”和“启动会话”分组，样式与之前一致。
  */
 class ShineLog
 {
@@ -46,12 +51,15 @@ private:
         Red
     };
     /**
-     * @brief 确认日志文件存在。
+     * @brief 新建一份日志文件并写页面骨架、当天标题和本次会话标题。
      *
-     * 该方法只在第一次写入日志时检查一次。
-     * 如果可执行文件同级目录下没有 Log.html，就创建基础 HTML 页面。
+     * 目录不存在就创建；文件重名就顺延编号。
+     * 成功后 _currentDay / _currentFile 指向这份新文件。
+     *
+     * @param day 形如 2026-09-21 的日期，决定放进哪个文件夹。
+     * @param stamp 形如 2026-09-21 13:55:02 的时间戳，用于文件名和会话标题。
      */
-    static void ensureLogFile();
+    static void openLogFile(const std::string &day, const std::string &stamp);
 
     /**
      * @brief 向日志文件追加一行带颜色的日志。
@@ -75,10 +83,10 @@ private:
     static std::string nowTime();
 
     /**
-     * @brief 获取日志文件路径。
-     * @return 可执行文件同级目录下的 Log.html 路径；如果获取失败，回退到当前目录 Log.html。
+     * @brief 日志根目录。
+     * @return 可执行文件同级的 LOG 目录；取不到可执行文件路径时回退到当前目录下的 LOG。
      */
-    static std::string logFilePath();
+    static std::string logRootDirectory();
 
     /**
      * @brief 转义 HTML 特殊字符。
@@ -87,20 +95,12 @@ private:
      */
     static std::string escapeHtml(const std::string &text);
 
-    /** @brief 判断日志文件是否已经是新版网页格式。 */
-    static bool fileUsesNewFormat(const std::string &path);
-
-    /** @brief 判断日志文件末尾是否已存在某天的分组标题。 */
-    static bool dayHeaderExists(const std::string &path, const std::string &day);
-
-    /** @brief 生成旧版日志的备份文件名。 */
-    static std::string legacyPathFor(const std::string &path);
-
-    static bool _checked;
     /** @brief 串行化日志写入，避免多线程并发写坏文件。 */
     static std::mutex _mutex;
-    /** @brief 本次进程是否已经写入过会话标题。 */
-    static bool _sessionStarted;
+    /** @brief 当前日志文件属于哪一天，形如 2026-09-21。 */
+    static std::string _currentDay;
+    /** @brief 当前正在追加的日志文件全路径；为空表示还没写过日志。 */
+    static std::string _currentFile;
 };
 
 #endif // INKING_BACKEND_FRAMEWORK_BASIC_SHINE_LOG_H
