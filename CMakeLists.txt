@@ -199,6 +199,7 @@ set(INKING_SOURCES
     src/command/CommandLibrary/CommandLibrary.cpp
     src/command/CommandLibrary/CommandLibraryTagDatabase.cpp
     src/command/CommandLibrary/CommandLibraryTagUI.cpp
+    src/command/CommandLibrary/CommandLibraryNetwork.cpp
     src/command/CommandRegistrant.cpp
     src/database/DatabaseManager.cpp
     src/database/DatabasePool.cpp
@@ -211,6 +212,7 @@ set(INKING_SOURCES
     src/ui/UIMessageLibrary.cpp
     src/thread/ThreadPool.cpp
     src/thread/TaskQueueLoop.cpp
+    src/network/Net.cpp
     basic/ShineBasicModule.cpp
     basic/ShineLog.cpp
     basic/ShineStatusChecker.cpp
@@ -241,6 +243,10 @@ target_link_libraries(
     PRIVATE
         replxx
 )
+
+if(WIN32)
+    target_link_libraries(InkingBackendFramework PRIVATE ws2_32)
+endif()
 
 if(TARGET inking_proto)
     target_link_libraries(

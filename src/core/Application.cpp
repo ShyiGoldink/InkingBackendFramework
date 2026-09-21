@@ -1,6 +1,7 @@
 #include "core/Application.h"
 #include "tool/PasswordTool.h"
 #include "ui/UIMessageLibrary.h"
+#include "network/Net.h"
 
 #include <iostream>
 
@@ -22,9 +23,10 @@ void Application::run()
     PasswordTool passwordTool;
     if (!passwordTool.verifyConsole())
         return;
-    //ui线程是主线程
+    // ui线程是主线程
     _uiWorker = std::thread([this]()
                             { _uiThread.run(); });
+    Net net;
 
     if (_uiWorker.joinable())
     {
