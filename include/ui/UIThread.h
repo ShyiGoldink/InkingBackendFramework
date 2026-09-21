@@ -5,8 +5,12 @@
 #include "command/CommandCenter.h"
 
 #include <atomic>
-#include <mutex>
 #include <string>
+
+namespace replxx
+{
+    class Replxx;
+}
 
 inline constexpr const char *kUIThreadModuleName = "UIThread";
 
@@ -34,12 +38,16 @@ public:
 
 private:
     void registerStages();
-    void renderQueuedMessages();
+    /**
+     * @brief 把消息队列里的内容交给 replxx 输出。
+     *
+     * 之所以要经过 replxx 而不是直接打印：消息可能刚好在用户编辑时到达，
+     * 只有 replxx 知道自己把提示符和输入画在了哪一行，由它来「清行、打印消息、重画」
+     * 才不会把用户正在敲的那一行弄乱。
+     */
+    void renderQueuedMessages(replxx::Replxx &rx);
 
     std::string _saveInput;       /**用户输入储存 */
-    std::string _liveInput;       /**当前用户编辑中的实时输入 */
-    int _liveCursorPosition = 0; /**当前输入光标位置 */
-    std::mutex _consoleMutex;     /**控制台输出互斥量 */
     CommandCenter _commandCenter; /**指令中心 */
     std::atomic<bool> _running{false};
 };
