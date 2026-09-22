@@ -2,16 +2,15 @@
 #define INKING_BACKEND_FRAMEWORK_THREAD_POOL_H
 
 #include <atomic>
-#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <functional>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #include "basic/ShineBasicModule.h"
 
-inline constexpr const size_t THREADNUM = 10;
 
 
 /*
@@ -30,7 +29,7 @@ inline constexpr const size_t THREADNUM = 10;
 class ThreadPool:public ShineBasicModule
 {
 public:
-ThreadPool();
+ThreadPool(size_t threadNum);
 ~ThreadPool();
 /**
  * @brief 受限线程池初始化函数：注意传入的内容和生命周期！
@@ -64,7 +63,7 @@ std::string moduleName()const override{
 }
 
 private:
-std::array<std::unique_ptr<std::thread>,THREADNUM> _threads;/**过多的线程非常容易影响效率，这个和连接不一样，所以我这边建议是使用array将线程的数量钉死 */
+std::vector<std::unique_ptr<std::thread>> _threads;/**线程数量在构造时确定 */
 std::mutex _mutex;/**通过锁来保护多线程进程 */
 std::condition_variable _cv;/**条件变量，整个线程池使用同一个环境变量，通过公平唤醒来提升线程池的性能*/
 std::function<bool()> _predicateCallback;/**谓词回调函数，初始化时用于判断环境变量 */

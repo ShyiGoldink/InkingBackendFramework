@@ -30,3 +30,12 @@ configure_file(
     "cmake/utf8_range.cmake"
     COPYONLY)
 message(STATUS "protobuf 补丁：cmake/utf8_range.cmake 改为编译内置 utf8_range 源码")
+
+# 3) cmake/upb_generators.cmake：替换为空实现，摘掉用不到的三个 upb 代码生成器
+#    （protoc-gen-upb / -upbdefs / -upb_minitable）。上游没有开关可以单独关掉它们，
+#    详见 patches/protobuf-upb_generators.cmake 里的说明。
+configure_file(
+    "${CMAKE_CURRENT_LIST_DIR}/patches/protobuf-upb_generators.cmake"
+    "cmake/upb_generators.cmake"
+    COPYONLY)
+message(STATUS "protobuf 补丁：跳过 upb 代码生成器（protoc-gen-upb 等三个可执行文件）")

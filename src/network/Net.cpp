@@ -1,5 +1,6 @@
 #include "network/Net.h"
 
+#include "thread/TaskQueueLoop.h"
 #include "ui/UIMessageLibrary.h"
 
 #include <system_error>
@@ -76,51 +77,61 @@ void Net::run()
             0.0f,
             "接受连接");
 
-        char buffer[4096];
-        while (true)
+        Task<std::any> clientTask;
+        clientTask.action = [clientSocket](const std::vector<std::any> &) -> std::any
         {
-            const int receivedBytes = recv(clientSocket, buffer, sizeof(buffer), 0);
-            if (receivedBytes == 0)
+            char buffer[4096];
+            while (true)
             {
-                UIMessageLibrary::addMessage(
-                    MessageType::normal,
-                    0.0f,
-                    "收到 0 字节，对端关闭");
-                break;
-            }
+                const int receivedBytes = recv(clientSocket, buffer, sizeof(buffer), 0);
+                if (receivedBytes == 0)
+                {
+                    UIMessageLibrary::addMessage(
+                        MessageType::normal,
+                        0.0f,
+                        "收到 0 字节，对端关闭");
+                    break;
+                }
 
-            if (receivedBytes < 0)
-            {
-                break;
-            }
-
-            UIMessageLibrary::addMessage(
-                MessageType::normal,
-                0.0f,
-                "收到 " + std::to_string(receivedBytes) + " 字节");
-
-            int sentBytes = 0;
-            while (sentBytes < receivedBytes)
-            {
-                const int currentSentBytes = send(
-                    clientSocket,
-                    buffer + sentBytes,
-                    receivedBytes - sentBytes,
-                    0);
-                if (currentSentBytes <= 0)
+                if (receivedBytes < 0)
                 {
                     break;
                 }
-                sentBytes += currentSentBytes;
+
+                UIMessageLibrary::addMessage(
+                    MessageType::normal,
+                    0.0f,
+                    "收到 " + std::to_string(receivedBytes) + " 字节");
+
+                int sentBytes = 0;
+                while (sentBytes < receivedBytes)
+                {
+                    const int currentSentBytes = send(
+                        clientSocket,
+                        buffer + sentBytes,
+                        receivedBytes - sentBytes,
+#ifdef _WIN32
+                        0);
+#else
+                        MSG_NOSIGNAL);
+#endif
+                    if (currentSentBytes <= 0)
+                    {
+                        break;
+                    }
+                    sentBytes += currentSentBytes;
+                }
+
+                if (sentBytes < receivedBytes)
+                {
+                    break;
+                }
             }
 
-            if (sentBytes < receivedBytes)
-            {
-                break;
-            }
-        }
-
-        closesocket(clientSocket);
+            closesocket(clientSocket);
+            return {};
+        };
+        TaskQueueLoop::instance().addTask(std::move(clientTask));
     }
 }
 

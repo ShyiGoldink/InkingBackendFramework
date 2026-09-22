@@ -8,11 +8,12 @@ namespace
 {
 /** 队列为空时管家线程最多睡多久（有任务入队时会立刻被唤醒，所以这个值只是兜底） */
 constexpr auto kIdleWait = std::chrono::hours(1);
+constexpr size_t kTaskThreadCount = 10;
 }
 
 TaskQueueLoop::TaskQueueLoop()
 {
-    _threadLoop = std::make_unique<ThreadPool>();
+    _threadLoop = std::make_unique<ThreadPool>(kTaskThreadCount);
     _threadLoop->init(
         // 谓词：有任务到期时才唤醒管家线程（只看队列非空不行，延迟任务会空转）
         [this]() { return hasDueTask(); },

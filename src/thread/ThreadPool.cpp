@@ -1,12 +1,20 @@
 #include "thread/ThreadPool.h"
 #include "basic/ShineLog.h"
 
+#include <stdexcept>
+
 namespace
 {   constexpr int STAGE_INIT_THREAD_POOL = 1;
     constexpr int STAGE_REGISTER_BUTLER = 2;
 }
 
-ThreadPool::ThreadPool(){
+ThreadPool::ThreadPool(const size_t threadNum)
+    : _threads(threadNum)
+{
+    if (threadNum == 0)
+    {
+        throw std::invalid_argument("ThreadPool 至少需要一个线程");
+    }
     //因为不太可能创建对象就直接产程竞态，所以这个标志位不上锁
    _stage = STAGE_REGISTER_BUTLER+10;
    registerToStatusChecker();
@@ -23,7 +31,7 @@ void ThreadPool::init(std::function<bool()> predicate, std::function<void()> exe
     if(predicate)_predicateCallback = predicate;
     if(execute)_executeCallback = execute;
     if(waitHint)_waitHintCallback = waitHint;
-     for(size_t i =0;i<THREADNUM;i++){
+    for(size_t i =0;i<_threads.size();i++){
         //创建线程
         //然后让线程执行管家函数
          _threads[i] = std::make_unique<std::thread>(&ThreadPool::butler, this);
@@ -136,9 +144,9 @@ void ThreadPool::executeGuarded(){
 
 ThreadPool::~ThreadPool(){
     quit();
-    for(size_t i =0;i<THREADNUM;i++){
-        if(_threads[i] && _threads[i]->joinable()){
-            _threads[i]->join();
+    for(auto &thread : _threads){
+        if(thread && thread->joinable()){
+            thread->join();
         }
     }
 }
