@@ -30,8 +30,8 @@ public:
     /**给外部提供一个接口用于获取到stage数据 */
     std::vector<Stage> getStage() const;
 
-        /**为命令提供一个快捷的方法，用于快速输出对象信息 */
-    void sayMyName()  const;
+    /**为命令提供一个快捷的方法，用于快速输出对象信息 */
+    void sayMyName() const;
 
 protected:
     /**

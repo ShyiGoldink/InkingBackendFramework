@@ -262,6 +262,24 @@ target_compile_features(
 	cxx_std_20
 )
 
+# ------------------------------------------------------------------
+# 网络层的量尺（tools/netbench/）。
+# 注意位置：不放在 test/ 下，因为 .gitignore 把 /test/ 和 /tests/ 整个排除了
+# （那里放的是硬编码本机密码的临时程序），量尺是要跟仓库走的。
+# 生成的可执行文件落在同一个 build/bin/ 下，Windows 和 Linux 命令写法一致。
+# ------------------------------------------------------------------
+option(INKING_BUILD_TEST_TOOLS "Build network test tools (echo client)" ON)
+
+if(INKING_BUILD_TEST_TOOLS)
+    add_executable(stepA2_echo_client tools/netbench/echo_client.cpp)
+    target_include_directories(stepA2_echo_client PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_features(stepA2_echo_client PRIVATE cxx_std_20)
+    if(WIN32)
+        target_link_libraries(stepA2_echo_client PRIVATE ws2_32)
+    endif()
+    message(STATUS "已启用测试工具: stepA2_echo_client -> ${CMAKE_BINARY_DIR}/bin")
+endif()
+
 # 构建完成后，首次复制默认配置到可执行文件同级目录
 add_custom_command(
     TARGET InkingBackendFramework

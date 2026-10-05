@@ -3,7 +3,8 @@
 > 配套文档：[NetworkLayerDesign.md](./NetworkLayerDesign.md)（目的地地图，回答「我们要做成什么样」）。
 > 这份文档回答另一个问题：**今天下午该敲哪几行**。
 >
-> 状态：A1、A2、A3 已完成（2026-09-18 ~ 09-22；A4、A5 已并入 A6）。下一阶：A6。每完成一阶就在这里更新状态。
+> 状态：A1、A2、A3 已完成（2026-09-18 ~ 09-22；A4、A5 已并入 A6）。**A6 已完成（2026-09-22，Windows 实测；
+> Linux 侧待复验，见 §6 末尾）。下一阶：B1。** 每完成一阶就在这里更新状态。
 
 ---
 
@@ -69,7 +70,7 @@
 | A3 | 每条连接一个线程的服务器 | — | 45 分钟 | 已完成（落地在框架里） |
 | A4 | ~~改成非阻塞，故意用 sleep 忙等~~ | — | — | 跳过（并进 A6） |
 | A5 | ~~用 `poll` 换掉忙等，单线程管 N 条连接~~ | M1 | — | 跳过（并进 A6；参考实现 `tests/reactor_demo.cpp`） |
-| A6 | 换 `epoll`（Linux）跑到 1000 条连接（含非阻塞 + 单线程管 N 条） | M1 | 2~3 小时 | 未开始（下一阶，规格见 §6） |
+| A6 | 换 `epoll`（Linux）跑到 1000 条连接（含非阻塞 + 单线程管 N 条） | M1 | 2~3 小时 | 已完成（Windows 侧，Linux 待复验） |
 | B1 | 抽出 Poller 接口 + 平台实现 | M1 | 1 小时 | 未开始 |
 | B2 | Connection 对象 + 连接表 + 每连接读缓冲 | M3 | 1 小时 | 未开始 |
 | B3 | Shard 类（一条线程一个 Poller） | M4 | 1 小时 | 未开始 |
@@ -99,7 +100,9 @@ A5（`poll` 换掉忙等）是紧跟着的一小步。这两个台阶取消—�
 到 A6 结束，你手上就有一个**真正能跑的多连接服务器**了——那大概是 1~2 个周末。从零到完整服务，我估计总共 15~25 小时实际敲代码时间，其中一半会花在调试上，这是正常的。
 
 到 A6 需要一台 Linux（WSL 或云服务器）——`epoll` 是 Linux 的。你手上没有的话，A6 可以先跳过，我们到 B 阶段
-（那里有跨平台的 `Poller` 接口）补。你现在就在 WSL 里开发，这条不用管。
+（那里有跨平台的 `Poller` 接口）补。**实际做法（2026-09-22 修订）**：`epoll` 只在 `ConnPoller` 的 Linux 分支里出现，
+别的部分（非阻塞语义、连接表、事件分派、EPOLLOUT 挂摘、清理阶段）全部跨平台，所以 Windows 上先把这些做完并验证
+（走 `WSAPoll`），到 Linux 只需复验 `epoll` 那半边——见 §6.1 的「Linux 侧待复验」。
 
 ---
 
@@ -162,8 +165,9 @@ A3 的形状是「每条连接占一条池线程」：1000 条连接它**都收�
 
 原计划里的 A4（非阻塞 + `sleep` 忙等）和 A5（`poll` 换掉忙等）并进这一阶：不安排「故意写笨办法、
 感受代价」的中间态了，但那两阶的技术点一个都不能少——顺序展开在下面「必须按这个顺序做」里。
-而且它们已经有现成的参考实现：`tests/reactor_demo.cpp`（非阻塞 + `poll` + 读写缓冲 + 干净关闭，290 行，
-跑 `tests/run_tests.sh reactor`）。**先读它**：这一阶是照那个形状把 `epoll` 版写进框架，不是从零推。
+原计划还让先读 `tests/reactor_demo.cpp`（非阻塞 + `poll` + 读写缓冲 + 干净关闭），那份参考实现从来没提交过，
+现在也不补了：这一阶本来就是照那个形状把 `epoll` 版写进框架，形状已经落在 `src/network/Net.cpp` 的
+`ConnPoller` / `ConnShard` 里，实现记录见 §6.1。
 
 ### 目标
 
@@ -191,7 +195,7 @@ A3 的形状是「每条连接占一条池线程」：1000 条连接它**都收�
    - 可读事件里 `recv` 返回 0 就是对端关闭（`EPOLLRDHUP` 只是提示，最终以 `recv` 的返回值为准）；
    - 注册时的 `data` 里放**连接标识**，不放裸 fd（fd 会被内核复用）。
 6. **压到 1000 条**：先看资源上限（`ulimit -n` 本机是 524288，够；`listen` 的 backlog 顺手调大），
-   再用 `test/hold_conns.py 1000 60` 保持 1000 条，另开终端看 CPU、fd、内存。
+   再用 `python3 tools/netbench/hold_conns.py 1000 60` 保持 1000 条，另开终端看 CPU、fd、内存。
 
 ### 这一阶真正要学的三件事
 
@@ -206,7 +210,7 @@ A3 的形状是「每条连接占一条池线程」：1000 条连接它**都收�
 
 - 不许再用 `TaskQueueLoop` / 任何额外线程来管连接（这一阶的主题就是「一条线程管 N 条」）
 - 不许用 `select`（同一件事的旧写法，学不到新东西）
-- 不许改量尺：`test/bin/stepA2_echo_client`、`test/hold_conns.py`
+- 不许改量尺：`build/bin/stepA2_echo_client`、`tools/netbench/hold_conns.py`
 - 不许一步到位：按上面 6 步走，每步都能单独跑出结果
 - 这一阶不做：分帧（C1）、业务派发（C3）、唤醒器（C4）、定时器（C5）、优雅停机（C6）
 
@@ -226,13 +230,49 @@ A3 的形状是「每条连接占一条池线程」：1000 条连接它**都收�
 cmake --build build --parallel 4     # 然后在控制台里 network-run
 ```
 
+### 量尺（2026-09-22 补齐）
+
+原计划引用的 `test/bin/stepA2_echo_client`、`test/hold_conns.py`、`tests/reactor_demo.cpp` 在仓库里并不存在。
+原因找到了：`.gitignore` 把 `/test/` 和 `/tests/` **整个**排除了（那里的注释写的是「开发期验证程序、硬编码本机密码，
+不进版本库」），所以放在 `test/` 下的东西永远提交不上去。量尺是要跟仓库走的，因此落在 `tools/netbench/`：
+
+- `tools/netbench/echo_client.cpp` → 构建产物 `build/bin/stepA2_echo_client[.exe]`。跨平台（Windows/Linux 都能编），
+  参数与本文档一致：`[条数] [消息内容] [端口] [主机] [-v]`，`#5000` 展开成 5000 个 `a`，逐字节比对，
+  收不满或发不完都算失败，失败非 0 退出。A 阶段之后接帧（C1）时改这里的收发即可。
+- `tools/netbench/hold_conns.py` → 纯 Python 3，无第三方依赖，两个平台同一份。
+  用法：`python3 tools/netbench/hold_conns.py [条数] [保持秒数] [--echo] [--timeout 秒] [--host H] [--port P]`。
+  全部成功才返回 0。**注意 Windows 上 `select()` 的 `FD_SETSIZE` 默认只有 512**，一次性塞 1000 个 fd 会直接报
+  `too many file descriptors in select()`，所以脚本内部把 fd 按每批 ≤400 分组，用少量工作线程分别驱动。
+- `tools/netbench/edge_cases.py` → 验收第 4 条的专项检查：RST 异常断开不影响其它连接、半包、粘包、大消息、
+  全部断开后服务仍可复用。任何一项不过就非 0 退出。
+- `tools/netbench/run_acceptance.ps1` → Windows 上一键跑完全部量尺（见下面「无人值守启动」）。
+- `tests/reactor_demo.cpp` 不再补：它的技术点（非阻塞 + poll + 读写缓冲 + 干净关闭）就是 A6 前 3 步本身，
+  而 A6 的实际落地位置在 `src/network/Net.cpp`，写一份两边都要维护的参考实现只会制造第二份真相。
+
+CMake 里新增开关 `INKING_BUILD_TEST_TOOLS`（默认 ON），只构建独立测试可执行文件，
+不参与框架主程序，输出到同一个 `build/bin/`，因此脚本在 Windows 和 Linux 上命令写法一致。
+
+**无人值守启动**：框架的控制台在 stdin 被重定向时很难被脚本驱动（replxx 在管道下不能一次拿多行，
+而且 stdin 一 EOF 控制台就退出）。所以 `Application::run()` 增加了环境变量开关：
+
+```bash
+INKING_AUTO_NETWORK=1 build/bin/InkingBackendFramework    # 跳过控制台密码，直接启动网络服务
+```
+
+密码保护的只是「有人坐在控制台前面」这个场景；脚本 / systemd / 容器里本来就没有人工输密码这回事。
+不设这个变量时行为与以前完全一致。
+
 ### 怎么测
 
 ```bash
-test/bin/stepA2_echo_client 1000 hello                  # 单条连接的功能回归（必须先过）
-python3 test/hold_conns.py 1000 60                      # 1000 条保持 60 秒
-python3 test/hold_conns.py 15 0 --echo --timeout 1      # 15 条各发一次 → 应该 15 条全成功
-python3 test/hold_conns.py 1000 0 --echo --timeout 1    # 1000 条各发一次（慢一点，但最能说明问题）
+build/bin/stepA2_echo_client 1000 hello                                   # 单条连接的功能回归（必须先过）
+python3 tools/netbench/hold_conns.py 1000 60                              # 1000 条保持 60 秒
+python3 tools/netbench/hold_conns.py 15 0 --echo --timeout 1              # 15 条各发一次 → 应该 15 条全成功
+python3 tools/netbench/hold_conns.py 1000 0 --echo --timeout 1            # 1000 条各发一次（慢一点，但最能说明问题）
+python3 tools/netbench/edge_cases.py                                      # RST / 半包 / 粘包 / 大消息 / 复用
+
+# Windows 上一键跑完上面全部（含守卫句柄回收与空闲 CPU）：
+pwsh tools/netbench/run_acceptance.ps1
 ```
 
 另开一个终端看这四样：`top -H -p <pid>`（只应该有一条线程热，空闲时 ≈ 0）、
@@ -272,9 +312,84 @@ python3 test/hold_conns.py 1000 0 --echo --timeout 1    # 1000 条各发一次�
 
 ---
 
+## 6.1 A6 实现记录（2026-09-22）
+
+### 落地位置与形状
+
+全部在 `src/network/Net.cpp` 里，`Net::run()` 自己跑事件循环（借 `TaskQueueLoop` 的一条后台线程常驻，
+不再是「一条连接一个池任务」）。三个匿名 namespace 里的东西：
+
+| 名字 | 干什么 |
+| --- | --- |
+| `Connection` | 一条连接的状态：socket、收到的字节、没发完的字节 + 发送游标 |
+| `ConnPoller` | 事件集合的薄封装：`init/add/modify/remove/wait`。**Linux 走 `epoll`（LT），Windows 走 `WSAPoll`**，上层代码一套 |
+| `ConnShard` | 事件循环本体：accept 到 EAGAIN、读写分派、EPOLLOUT 挂摘、一轮结束后的清理阶段 |
+
+`Net.cpp` 里另有三个跨平台小工具：`setNonBlocking`、`isWouldBlock`（`EAGAIN`/`WSAEWOULDBLOCK`）、
+`pollNative`（Windows 上 UCRT64 连 `<poll.h>` 都没有，必须走 `WSAPoll`）。
+
+### 六个步骤的实际顺序
+
+1. 连接 socket 非阻塞 + `EAGAIN` 处理 + 发送游标；监听 socket 非阻塞（顺手在 `createAcceptSocket()` 里做了）。
+2. `accept` 循环接到 `EAGAIN` 为止。
+3. 连接表 `unordered_map<SocketType, Connection>` + 每连接状态。
+4. `epoll_create1` / `epoll_ctl(ADD/MOD/DEL)` / `epoll_wait`（LT）。
+5. 事件语义四件事：`EPOLLOUT` 只在有积压时挂、发完立刻摘；`EINTR` 重试；`recv` 返回 0 才算关闭；
+   注册时 `data.ptr` 放连接标识而不是裸 fd。
+6. 压到 1000 条。
+
+**修掉的三个原有问题**（都在改之前挡住路）：
+
+- `startUp()` 里那段「调整为非阻塞」引用了不存在的变量 `fd`（Linux 分支根本编不过），而且把失败判断写反了
+  （`if (flags == -1)` 里才去调用 `F_SETFL`）；
+- `accept` 失败后无条件 `continue`：监听 socket 一旦非阻塞，这就变成纯忙等（CPU 100%）；
+- `listen` 的 backlog 是 128，压 1000 条连接时会有一批连不上。
+
+### 实测（Windows 11 / MSYS2 UCRT64 / g++ 16.2.0，`tools/netbench/run_acceptance.ps1` 一键复现）
+
+| 量尺 | A3 形状（改之前） | A6（一条线程 + 事件集合） |
+| --- | --- | --- |
+| `stepA2_echo_client 1000 hello` | 1000/1000 | **1000/1000**，QPS ≈ 5.4 万 |
+| `hold_conns.py 15 0 --echo` | 9/15 | **15/15** |
+| `hold_conns.py 1000 0 --echo` | 9/1000 | **1000/1000** |
+| `hold_conns.py 1000 10` | — | 1000 条全部连上（0.08 秒）、保持 10 秒、0 条被断 |
+| 句柄回收 | — | 基线 144 → 1000 条时 900+ → 全部断开后**回落到 144** |
+| 空闲 CPU（5 秒采样） | 0.6%（A3 记录） | **0 ~ 16 ms / 5 秒**（≈ 0.3% 以内） |
+| 边界：RST / 半包 / 粘包 / 5000 字节 / 复用 | — | 5 项全过（`edge_cases.py`） |
+
+### Linux 侧待复验（下一件事）
+
+今天这台是 Windows，走的是 `WSAPoll` 分支（功能对，但它是 O(N) 的，无法体现 `epoll` 的价值）。
+**真正的 `epoll` 分支（`#else` 那半边）还没在 Linux 上编译运行过**，因为 `epoll` 是 Linux 独有的。
+到 WSL 或 Linux 机器上要做的就三件：
+
+```bash
+cmake -S . -B build && cmake --build build --parallel 4
+INKING_AUTO_NETWORK=1 build/bin/InkingBackendFramework &
+build/bin/stepA2_echo_client 1000 hello
+python3 tools/netbench/hold_conns.py 1000 0 --echo --timeout 5
+python3 tools/netbench/edge_cases.py
+# 另开终端看：top -H -p <pid>（只应有一条线程热，空闲 ≈ 0）、ls /proc/<pid>/fd | wc -l（全关后回落）
+```
+
+预期：与上表同结果。若 Linux 上编不过，最可能的点已经收拢在 `ConnPoller` 这个类里
+（`epoll_event.data.ptr`、`EPOLLRDHUP`、`nfds_t` 这几处），改起来是局部改动。
+
+### 这一阶留下的技术债（按文档，属于后面几阶）
+
+- `ConnPoller` 是私有的临时封装，B1 会把它抽成正式的 `Poller` 接口；
+- 还没做：分帧（C1）、连接状态机与「一条在飞」（C2）、业务派发（C3）、唤醒器（C4）、
+  定时器与超时（C5）、优雅停机（C6）；
+- `epoll_wait` 的超时暂时固定 1000ms；C5 里它必须变成「最近一个定时器到期时刻」；
+- Windows 分支的 `remove()` 只是把 `pollfd` 标记成无效槽位，`_descriptors` 会随历史连接数单向增长
+  （Linux 没有这个问题）。B1 抽接口时一并处理。
+
+---
+
 ## 7. A6 之后
 
-先不展开。等 A6 跑通再给下一阶（B1：抽出 `Poller` 接口 + 平台实现，把 `epoll` 藏到接口后面）的规格——
+**A6 已跑通（Windows 实测，验收五条全过；Linux 复验见 §6.1）。** 下一阶 B1：抽出 `Poller` 接口 + 平台实现，
+把 `epoll` 藏到接口后面——规格等这一阶开始时再给。
 **提前看后面的只会让你重新卡住一次**，这正是这份文档要避免的事。
 
 ---
