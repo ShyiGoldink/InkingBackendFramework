@@ -669,7 +669,11 @@ bool Net::applyNetworkServer()
 #else
     success = true;
 #endif
-    setStageStatus(STAGE_APPLY_NETWORK_SERVER, "申请本地的网络服务请求", success, errorMessage);
+    // 这四步是"启动"这条流水线上的内部环节：成功时不单独刷日志，
+    // 由 startUp() 汇总成一条"启动！通过"。失败时静默策略自动放行 Error，
+    // 所以出问题时依然能一眼看到是哪一步挂的。
+    setStageStatus(STAGE_APPLY_NETWORK_SERVER, "申请本地的网络服务请求", success, errorMessage,
+                   StageLogPolicy::Silent);
 
     return success;
 }
@@ -733,7 +737,8 @@ bool Net::createAcceptSocket()
             }
         }
     }
-    setStageStatus(STAGE_CREATE_SOCKET, "创建接受连接请求专用的Socket", success, errorMessage);
+    setStageStatus(STAGE_CREATE_SOCKET, "创建接受连接请求专用的Socket", success, errorMessage,
+                   StageLogPolicy::Silent);
     return success;
 }
 
@@ -763,7 +768,7 @@ bool Net::stepBind(const int &port)
     else
         success = true;
 
-    setStageStatus(STAGE_BIND, "绑定端口", success, errorMessage);
+    setStageStatus(STAGE_BIND, "绑定端口", success, errorMessage, StageLogPolicy::Silent);
     return success;
 }
 
@@ -789,6 +794,6 @@ bool Net::stepListen()
     else
         success = true;
 
-    setStageStatus(STAGE_LISTEN, "监听端口", success, errorMessage);
+    setStageStatus(STAGE_LISTEN, "监听端口", success, errorMessage, StageLogPolicy::Silent);
     return success;
 }

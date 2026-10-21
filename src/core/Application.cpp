@@ -1,4 +1,5 @@
 #include "core/Application.h"
+#include "basic/ShineLog.h"
 #include "tool/PasswordTool.h"
 #include "ui/UIMessageLibrary.h"
 #include "network/Net.h"
@@ -44,12 +45,23 @@ Application::~Application() = default;
 
 void Application::run()
 {
+    // 日志必须在任何模块写第一条记录之前就绪：文件、阈值、快照线程都在 init 里定下来。
+    // 默认不往控制台写日志；只有显式设置 INKING_LOG_CONSOLE 时才会调用下面的镜像出口。
+    ShineLog::init();
+    ShineLog::setMirrorSink([](LogLevel level, const std::string &line)
+                            { UIMessageLibrary::addMessage(
+                                  level >= LogLevel::Error ? MessageType::error : MessageType::normal, 0.0f,
+                                  line); });
+
     showStartupMessage();
     PasswordTool passwordTool;
     if (!autoNetworkRequested())
     {
         if (!passwordTool.verifyConsole())
+        {
+            ShineLog::shutdown();
             return;
+        }
     }
     else
     {
@@ -77,11 +89,20 @@ void Application::run()
     {
         _uiWorker.join();
     }
+
+    // 收尾时把最终状态写成快照再关文件；即使这里被跳过，atexit 也会兜底再做一次
+    ShineLog::shutdown();
 }
 
 void Application::showStartupMessage()
 {
     UIMessageLibrary::addMessage(MessageType::normal, 0.0f, "InkingBackendFramework已经启动。输入help来查看指令");
+    const std::string logPath = ShineLog::filePath();
+    if (!logPath.empty())
+    {
+        // 只报路径，不把日志内容倒到控制台：需要时用 log tail / log open 取
+        UIMessageLibrary::addMessage(MessageType::normal, 0.0f, "日志文件：" + logPath);
+    }
     setStageStatus(STAGE_STARTUP_MESSAGE, "打印启动提示", true, "启动提示已打印");
     setStageDetail(STAGE_STARTUP_MESSAGE, "启动前的基础提示阶段", "如果没有看到启动提示，请检查标准输出是否可用。");
 }

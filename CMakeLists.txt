@@ -199,6 +199,7 @@ set(INKING_SOURCES
     src/command/CommandLibrary/CommandLibrary.cpp
     src/command/CommandLibrary/CommandLibraryTagDatabase.cpp
     src/command/CommandLibrary/CommandLibraryTagUI.cpp
+    src/command/CommandLibrary/CommandLibraryTagLog.cpp
     src/command/CommandLibrary/CommandLibraryNetwork.cpp
     src/command/CommandRegistrant.cpp
     src/database/DatabaseManager.cpp
@@ -208,6 +209,7 @@ set(INKING_SOURCES
     src/tool/PasswordTool.cpp
     src/tool/JsonTool.cpp
     src/tool/PathFindTool.cpp
+    src/tool/LogReportTool.cpp
     src/ui/UIThread.cpp
     src/ui/UIMessageLibrary.cpp
     src/thread/ThreadPool.cpp

@@ -17,59 +17,131 @@ std::vector<Stage> ShineBasicModule::getStage() const
     return _stage; // 拷贝一份返回，避免把内部指针暴露出去
 }
 
-void ShineBasicModule::setStageStatus(int step, const std::string &name, bool statu, const std::string &message)
+void ShineBasicModule::setStageStatus(int step, const std::string &name, bool statu, const std::string &message,
+                                      StageLogPolicy policy, const std::source_location &site)
 {
     std::string logMessage;
-    bool logAsError = !statu;
+    bool logAsError = false;
+    bool shouldLog = false;
 
     {
         std::lock_guard<std::mutex> lock(_stageMutex);
 
-        // 首先找到stage
         Stage *stage = findStage(step);
-        // 如果stage不存在，那么创建stage
-        if (stage == nullptr)
+        const bool created = (stage == nullptr);
+
+        if (created)
         {
+            // 首建阶段：状态和消息必须一起写下来。
+            // 旧版这里只填了 step 和 name 就返回，于是第一次日志永远是空的，
+            // status 命令也会显示 "[通过] 打印启动提示 - " 这种没有内容的行。
             Stage newStage;
             newStage.step = step;
             newStage.name = name;
-            _stage.push_back(newStage);
-            stage = &_stage.back();
+            newStage.status = statu;
+            newStage.message = message;
+            newStage.count = 1;
+            newStage.firstSeen = ShineLog::timestamp();
+            newStage.lastSeen = newStage.firstSeen;
+            _stage.push_back(std::move(newStage));
+
+            logAsError = !statu;
+            shouldLog = (policy != StageLogPolicy::Silent) || !statu;
+
+            std::ostringstream text;
+            text << name << " | 已登记";
+            if (!message.empty())
+            {
+                text << " | " << message;
+            }
+            logMessage = text.str();
         }
-        // 如果stage存在，并且name与当前修改的name不一致，那么记录错误日志并拒绝更新
         else if (!stage->name.empty() && stage->name != name)
         {
+            // 阶段编号冲突：拒绝更新，避免两个函数抢同一个 step 把状态互相覆盖
             logAsError = true;
+            shouldLog = true;
             logMessage = "自检阶段编号冲突: step " + std::to_string(step) + " 已注册为 " + stage->name +
                          "，不能重新注册为 " + name;
         }
-        // 如果stage存在但是name为空，那么更新stage的name为当前修改的name
-        else if (stage->name.empty())
-        {
-            stage->name = name;
-            stage->status = statu;
-            stage->message = message;
-            logMessage = stage->name + " - " + message;
-        }
         else
         {
+            const bool previousStatus = stage->status;
+            const bool changed = (previousStatus != statu) || (stage->message != message);
+
+            if (stage->name.empty())
+            {
+                stage->name = name;
+            }
             stage->status = statu;
             stage->message = message;
-            logMessage = stage->name + " - " + message;
+            ++stage->count;
+            stage->lastSeen = ShineLog::timestamp();
+            if (stage->firstSeen.empty())
+            {
+                stage->firstSeen = stage->lastSeen;
+            }
+
+            switch (policy)
+            {
+            case StageLogPolicy::Always:
+                shouldLog = true;
+                break;
+            case StageLogPolicy::Silent:
+                // 静默只压成功流水；失败必须留证
+                shouldLog = !statu;
+                break;
+            case StageLogPolicy::OnChange:
+            default:
+                shouldLog = !statu || changed;
+                break;
+            }
+
+            logAsError = !statu;
+
+            if (shouldLog)
+            {
+                std::ostringstream text;
+                text << stage->name << " | ";
+                if (previousStatus != statu)
+                {
+                    text << (previousStatus ? "通过 → 失败" : "失败 → 通过");
+                }
+                else
+                {
+                    text << (statu ? "通过" : "失败");
+                }
+                if (!message.empty())
+                {
+                    text << " | " << message;
+                }
+                logMessage = text.str();
+            }
         }
 
         std::stable_sort(_stage.begin(), _stage.end(), [](const Stage &left, const Stage &right)
                          { return left.step < right.step; });
     }
 
+    if (!shouldLog)
+    {
+        return;
+    }
+
+    // 兜底：任何情况下都不写空消息（空行是旧日志里最难排查的噪声）
+    if (logMessage.empty())
+    {
+        logMessage = name;
+    }
+
     // 日志写在锁外：日志模块自己有锁，两把锁不要嵌套
     if (logAsError)
     {
-        ShineLog::error(moduleName(), logMessage);
+        ShineLog::log(LogLevel::Error, moduleName(), step, logMessage, site);
     }
     else
     {
-        ShineLog::pass(moduleName(), logMessage);
+        ShineLog::log(LogLevel::Info, moduleName(), step, logMessage, site);
     }
 }
 

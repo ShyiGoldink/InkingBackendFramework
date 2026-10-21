@@ -4,6 +4,7 @@
 #include "tool/PathFindTool.h"
 #include "ui/UIMessageLibrary.h"
 
+#include <chrono>
 #include <sstream>
 
 namespace
@@ -13,6 +14,20 @@ namespace
     constexpr int STAGE_EXECUTE_DATABASE = 4;
     constexpr int STAGE_QUERY_DATABASE = 5;
     constexpr int STAGE_DISCONNECT_DATABASE = 6;
+
+    /** 把耗时拼进阶段消息：慢查询和"执行成功"靠这一个数字就能区分开。 */
+    std::string withElapsed(const std::string &message, const std::chrono::steady_clock::duration &elapsed)
+    {
+        const auto milliseconds =
+            std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+        std::ostringstream text;
+        if (!message.empty())
+        {
+            text << message << " | ";
+        }
+        text << "耗时 " << milliseconds << " ms";
+        return text.str();
+    }
 }
 
 DatabaseManager::DatabaseManager()
@@ -82,6 +97,7 @@ void DatabaseManager::execute(PoolType poolType, const std::vector<std::string> 
     // 借用连接会抛异常（池没初始化、建连失败、池满等待超时），这里必须接住：
     // 以前没有这层 try，任何一次借用失败都会把整个进程 terminate 掉。
     QueryResult result;
+    const auto started = std::chrono::steady_clock::now();
     try
     {
         DatabasePool databasePool(poolType);
@@ -101,7 +117,10 @@ void DatabaseManager::execute(PoolType poolType, const std::vector<std::string> 
     const std::string text = result.toString();
     const char *msg = text.c_str();
     UIMessageLibrary::quickMessage(result.success, 0.0f, msg);
-    setStageStatus(STAGE_EXECUTE_DATABASE, "增/删/改数据库", result.success, result.errorMessage);
+    // 每条 SQL 都留证（Always）：这是审计价值最高的一条路径，不能因为"重复"被折叠掉。
+    setStageStatus(STAGE_EXECUTE_DATABASE, "增/删/改数据库", result.success,
+                   withElapsed(result.errorMessage, std::chrono::steady_clock::now() - started),
+                   StageLogPolicy::Always);
 }
 
 // 查数据库
@@ -114,6 +133,7 @@ void DatabaseManager::query(PoolType poolType, const std::vector<std::string> &a
     // 重试会写两次。每次尝试各自一个作用域，前一个 pool 对象先析构，
     // 那条坏连接才会在 release() 里被丢弃，下一次借到的是干净的连接。
     QueryResult result;
+    const auto started = std::chrono::steady_clock::now();
     try
     {
         for (int attempt = 0; attempt < 2; ++attempt)
@@ -140,7 +160,9 @@ void DatabaseManager::query(PoolType poolType, const std::vector<std::string> &a
     const std::string text = result.toString();
     const char *msg = text.c_str();
     UIMessageLibrary::quickMessage(result.success, 0.0f, msg);
-    setStageStatus(STAGE_QUERY_DATABASE, "查数据库", result.success, result.errorMessage);
+    setStageStatus(STAGE_QUERY_DATABASE, "查数据库", result.success,
+                   withElapsed(result.errorMessage, std::chrono::steady_clock::now() - started),
+                   StageLogPolicy::Always);
 }
 
 // 断开数据库的连接

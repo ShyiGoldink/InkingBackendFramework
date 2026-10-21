@@ -70,12 +70,16 @@ std::function<bool()> _predicateCallback;/**谓词回调函数，初始化时用
 std::function<void()> _executeCallback;/**执行回调函数，满足条件变量后执行 */
 std::function<std::chrono::milliseconds()> _waitHintCallback;/**最多还能睡多久，用于延迟任务 */
 std::atomic<bool> _isQuit{false};/**线程池退出标志位 */
-std::atomic<int> _stage;/*一个小辅助数，用于给次注册管家函数添加阶段差别。
-                           管家线程会读它，所以要用原子的，不然也是个数据竞争*/
 /**安全关闭全部线程 */
 void release();
-/**管理函数，线程出生起就要执行这个函数，这个函数负责管理线程 */
-void butler();
+/**
+ * @brief 管家线程的主循环。
+ *
+ * 每条线程只认自己的编号：阶段号 = 基址 + index。旧版用共享的 _stage 自增，
+ * 10 条线程并发读写同一个计数器，最后全落到同一个阶段上，
+ * 于是"创建管家线程"这件事在日志里被写了 10 遍。
+ */
+void butler(std::size_t index);
 /**
  * @brief 执行一次注入的执行体，并兜住异常。
  *

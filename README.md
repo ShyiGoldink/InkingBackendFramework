@@ -264,17 +264,25 @@ Build options: `INKING_ENABLE_PROTOBUF` (default ON), `INKING_PROTOBUF_SOURCE` (
 Everything that goes over the wire is one frame. All integers are big-endian (network byte order):
 
 ```text
-+------------------+-------------------+------------------+------------------+
-| packet length    | command length    | command (UTF-8)  | payload          |
-| 8 bytes, uint64  | 4 bytes, uint32   | command length B | rest of the frame|
-+------------------+-------------------+------------------+------------------+
++----------+----------+----------+------------------+------------------+
+| magic    | packet   | command  | command (UTF-8)  | payload          |
+| 2 bytes  | 4 bytes  | 2 bytes  | command length B | rest of the frame|
++----------+----------+----------+------------------+------------------+
 ```
 
-- `packet length` is the size of the whole frame, header included;
-- `payload length` is derived: `packet length - 12 - command length`;
+- `magic` is the fixed constant `0xABCD`; it lets the receiver reject anything that is not this protocol after
+  reading two bytes (port scans, older clients, a client pointed at the wrong port);
+- `packet length` is the size of the whole frame, **magic included** — it is the only field that locates the next
+  frame, so the next frame always starts at `current + packet length`;
+- `command length` only splits the frame into command and payload;
+- `payload length` is derived: `packet length - 8 - command length`;
 - the payload is the protobuf-serialised message; the frame layer never looks inside it and does not depend on
   protobuf at all;
 - limits: command ≤ 1024 bytes, whole frame ≤ 16 MiB — see `include/protocol/ProtocolFrame.h`.
+- an invalid header makes the codec drop its buffer and report `InvalidFrame`. **The frame layer never tries to
+  resynchronise by scanning for the magic**: the payload is arbitrary bytes, so a scanned hit may be payload data,
+  and one wrong hit misaligns every following frame. The caller treats `InvalidFrame` as "this connection is no
+  longer trustworthy" and closes it. This matches what TLS, HTTP/2, gRPC and Kafka do on reliable transports.
 
 Implemented in `include/protocol/ProtocolFrame.h`, `include/protocol/FrameCodec.h` and `src/protocol/FrameCodec.cpp`:
 
@@ -335,8 +343,44 @@ cmake/         CMake helper scripts, patches/ for protobuf, CMakeUserPaths.cmake
 build/         Build output, including the downloaded protobuf source under build/_deps/ (git-ignored)
 ```
 
-At runtime the self-check log goes to `LOG/` next to the executable: one folder per day, one HTML file per run,
-for example `LOG/2026-09-21/13-57-44.html`. A run that crosses midnight opens a new file in the new day's folder,
-and two runs that start in the same second get `-1`, `-2` suffixes instead of overwriting each other. Nothing is
-ever appended to an older run's file, so no single log file grows without bound. Both `LOG/` and the old
-single-file `Log.html` are git-ignored.
+### Runtime logs
+
+The self-check log is plain text: `LOG/<YYYY-MM-DD>/run-<HH-MM-SS>-<pid>.log` next to the executable, with
+`LOG/latest.txt` always pointing at the most recent run. One run = one file; a run that crosses midnight keeps
+writing to the same file and only adds a date-change marker.
+
+Every line carries its own locator, so a record leads back to the code that produced it:
+
+```text
+19:52:36.484 | INFO  | Application:01 | #000001 | T-01 | Application.cpp:106 | 打印启动提示 | 已登记 | 启动提示已打印
+   time          level   module:step    seq      thread  source:line        message
+```
+
+The log is deliberately **not** printed to the console. Read it through the `log` command family:
+
+| Command | Purpose |
+| --- | --- |
+| `log tail [n]` | last n records, read from the in-memory ring buffer |
+| `log grep <text> [module]` | search that buffer |
+| `log level [level]` | show or change the on-disk threshold |
+| `log stats` | totals, folded / suppressed counts, per level and module |
+| `log snapshot` | write a full state snapshot right now |
+| `log mark <text>` | drop a `MARK` anchor before reproducing a problem |
+| `log open` | print the absolute path of the current log file |
+| `log report` | build a self-contained HTML report from the current log |
+
+Behaviour worth knowing:
+
+- Consecutive identical records are written once, then summarised by a `FOLD` line carrying the repeat count.
+- Each key is limited to 5 records per second; the rest are counted and reported in the footer.
+- `ERROR` / `FATAL` are never folded — failure evidence stays one line per event.
+- `setStageStatus()` writes on first registration, on any change of status or message, and on any failure.
+  Unchanged repeats only bump the counter, which `status` shows as `×N` plus the last time.
+  `StageLogPolicy::{OnChange, Always, Silent}` tunes this per stage (SQL audit uses `Always`, heartbeats `Silent`).
+- A diff snapshot runs every 5 minutes: it writes nothing while the state is unchanged, and a full snapshot is
+  written on exit. `log snapshot` forces one on demand.
+
+Environment overrides: `INKING_LOG_LEVEL`, `INKING_LOG_CONSOLE` (mirrors records at or above that level to the
+console, default off), `INKING_LOG_SNAPSHOT` (`0` disables snapshots), `INKING_LOG_SNAPSHOT_INTERVAL` (seconds).
+
+`LOG/` and the old single-file `Log.html` are git-ignored.

@@ -6,5 +6,6 @@ std::vector<std::vector<Command>> CommandLibrary::commands() const
     commands.push_back(databaseCommands());
     commands.push_back(uiCommands());
     commands.push_back(netCommands());
+    commands.push_back(logCommands());
     return commands;
 }

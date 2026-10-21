@@ -5,7 +5,8 @@
 
 namespace
 {   constexpr int STAGE_INIT_THREAD_POOL = 1;
-    constexpr int STAGE_REGISTER_BUTLER = 2;
+    /** 管家线程的阶段号从这里开始向后排，每条线程一个固定编号 */
+    constexpr int STAGE_BUTLER_BASE = 10;
 }
 
 ThreadPool::ThreadPool(const size_t threadNum)
@@ -15,9 +16,7 @@ ThreadPool::ThreadPool(const size_t threadNum)
     {
         throw std::invalid_argument("ThreadPool 至少需要一个线程");
     }
-    //因为不太可能创建对象就直接产程竞态，所以这个标志位不上锁
-   _stage = STAGE_REGISTER_BUTLER+10;
-   registerToStatusChecker();
+    registerToStatusChecker();
 }
 
 void ThreadPool::init(std::function<bool()> predicate, std::function<void()> execute,
@@ -33,23 +32,27 @@ void ThreadPool::init(std::function<bool()> predicate, std::function<void()> exe
     if(waitHint)_waitHintCallback = waitHint;
     for(size_t i =0;i<_threads.size();i++){
         //创建线程
-        //然后让线程执行管家函数
-         _threads[i] = std::make_unique<std::thread>(&ThreadPool::butler, this);
-         _stage++;
+        //然后让线程执行管家函数；编号随线程一起传进去，线程之间不再共享计数器
+         _threads[i] = std::make_unique<std::thread>(&ThreadPool::butler, this, i);
     }
-    setStageStatus(STAGE_INIT_THREAD_POOL,"创建线程池",true,"线程池创建完成");
+    // 聚合记录：一条日志说明"起了几条线程"，而不是每条线程各刷一行
+    setStageStatus(STAGE_INIT_THREAD_POOL,"创建线程池",true,
+                   "线程池创建完成，共 " + std::to_string(_threads.size()) + " 条管家线程");
 }
 
-void ThreadPool::butler(){
+void ThreadPool::butler(const std::size_t index){
+    const int stage = STAGE_BUTLER_BASE + static_cast<int>(index);
     if(!_predicateCallback ||! _executeCallback){
-        setStageStatus(STAGE_REGISTER_BUTLER+_stage,"向线程中注入管家函数",false,"未成功传入谓词函数或执行函数");
+        setStageStatus(stage,"向线程中注入管家函数",false,"未成功传入谓词函数或执行函数");
         return;
     }
     if(_isQuit){
-        setStageStatus(STAGE_REGISTER_BUTLER+_stage,"向线程中注入管家函数",false,"线程池退出！");
+        setStageStatus(stage,"向线程中注入管家函数",false,"线程池退出！");
         return;
     }
-    setStageStatus(STAGE_REGISTER_BUTLER+_stage,"向线程中注入管家函数",true,"已创建线程管家");
+    // 每条线程的"已就绪"只进状态表不落盘：10 条线程的健康状况在 status 里逐条可见，
+    // 但不需要在日志里写 10 行一样的话。失败时会突破静默策略，照常记录。
+    setStageStatus(stage,"向线程中注入管家函数",true,"已创建线程管家",StageLogPolicy::Silent);
     //管家函数，处理循环
     while (true)
     {

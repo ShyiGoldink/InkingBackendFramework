@@ -1,6 +1,7 @@
 #include "command/CommandLibrary.h"
 #include "command/CommandCenter.h"
 #include "ui/UIMessageLibrary.h"
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 
@@ -52,6 +53,14 @@ std::vector<Command> CommandLibrary::uiCommands() const
                      const auto &stages = module->getStage();
                      for (const auto &stage : stages)
                      {
+                         // 阶段编号要和日志里的 "模块:编号" 对得上，所以这里必须显示 step。
+                         const std::string number = [&stage]()
+                         {
+                             std::ostringstream text;
+                             text << std::setw(2) << std::setfill('0') << stage.step;
+                             return text.str();
+                         }();
+
                          // 只用 setStageDetail 登记过、函数还没跑到的阶段是没有名字的，
                          // 这种阶段既不能说"通过"也没有内容可说，单独显示成"未运行"。
                          const bool neverRan = stage.name.empty();
@@ -59,16 +68,23 @@ std::vector<Command> CommandLibrary::uiCommands() const
                          {
                              const std::string label = !stage.description.empty()
                                                            ? stage.description
-                                                           : "阶段 " + std::to_string(stage.step);
-                             statusBuilder << "  [未运行] " << label << "\n";
+                                                           : "阶段 " + number;
+                             statusBuilder << "  [未运行] [" << number << "] " << label << "\n";
                              continue;
                          }
 
-                         statusBuilder << "  [" << (stage.status ? "通过" : "失败") << "] "
-                                       << stage.name << " - " << stage.message;
-                         if (!stage.status)
+                         // 次数与最近时间来自内存里的计数：日志为了不刷屏会折叠重复记录，
+                         // 但"这个阶段跑了多少次、最后一次是什么时候"依然要看得见。
+                         statusBuilder << "  [" << (stage.status ? "通过" : "失败") << "] [" << number << "] "
+                                       << stage.name << " - " << stage.message << "  (×" << stage.count;
+                         if (!stage.lastSeen.empty())
                          {
-                             statusBuilder << " (建议: " << stage.suggestion << ")";
+                             statusBuilder << ", 最近 " << stage.lastSeen;
+                         }
+                         statusBuilder << ")";
+                         if (!stage.status && !stage.suggestion.empty())
+                         {
+                             statusBuilder << "  建议: " << stage.suggestion;
                          }
                          statusBuilder << "\n";
                      }

@@ -1,5 +1,6 @@
 #include "ui/UIThread.h"
 #include "ui/UIMessageLibrary.h"
+#include "basic/ShineLog.h"
 
 #include <chrono>
 #include <exception>
@@ -111,7 +112,10 @@ void UIThread::run()
 
     while (_running.load())
     {
-        setStageStatus(STAGE_READ_INPUT, "读取控制台输入", true, "等待用户输入");
+        // 心跳阶段：只更新状态表，不写日志。
+        // "等待用户输入"每敲一条命令就重复一次，它证明的是"循环还活着"，
+        // 这件事在 status 命令里看执行次数就够了，不需要在日志里刷屏。
+        setStageStatus(STAGE_READ_INPUT, "读取控制台输入", true, "等待用户输入", StageLogPolicy::Silent);
         // 提示符交给 replxx：它自己画，也自己重绘，我们不再往控制台上写提示符
         const char* line = rx.input(kPrompt);
         if (line == nullptr)
@@ -126,7 +130,12 @@ void UIThread::run()
             // 直接回车：什么都不用做，下一轮 input() 会自己画一个新的提示符
             continue;
         }
-        setStageStatus(STAGE_EXECUTE_COMMAND, "执行控制台命令", true, "命令处理完成");
+
+        // 先把"用户到底输入了什么"记下来，这是整份日志的定位锚点。
+        // 旧日志只有"执行控制台命令 - 命令处理完成"，复盘时完全看不出操作内容。
+        ShineLog::command(input);
+
+        setStageStatus(STAGE_EXECUTE_COMMAND, "执行控制台命令", true, "开始执行", StageLogPolicy::Silent);
         const CommandResult result = _commandCenter.execute(input);
 
         if (result == CommandResult::Quit)
