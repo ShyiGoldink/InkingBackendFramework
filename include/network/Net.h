@@ -1,70 +1,81 @@
 #ifndef INKING_BACKEND_FRAMEWORK_NET_H
 #define INKING_BACKEND_FRAMEWORK_NET_H
 
-#ifdef _WIN32
-#include <winsock2.h>
-#include <windows.h>
-#include <ws2tcpip.h>
-#pragma comment(lib, "ws2_32.lib")
-typedef SOCKET SocketType;
-#else
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <poll.h>
-typedef int SocketType;
-#define INVALID_SOCKET -1
-#define SOCKET_ERROR -1
-#define closesocket close
-#endif
-
-inline constexpr const char *kNetModuleName = "Net";
-
 #include "basic/ShineBasicModule.h"
+#include "network/NetworkStage.h"
+#include "network/SocketOps.h"
 
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <string>
 
 /**
- * 本类是一个基础的网络模块，现在还是基础形态，之后会慢慢升级
+ * @brief 网络模块的门面：建立监听、组织分片与接入线程、按序启停。
+ *
+ * 它自己**不碰任何连接**——连接的读写全部在分片线程里。这个类只负责三件事：
+ * 1. 读配置（端口 / 分片数 / 每分片连接上限）；
+ * 2. 建监听 socket、拉起 N 个分片与 1 条接入线程；
+ * 3. 按「先停接入、再停分片、最后关监听」的顺序收回全部资源。
+ *
+ * 分层关系（从下往上）：
+ *
+ *   SocketOps   平台 socket 语义（非阻塞、错误码、发送标志）
+ *   Poller      谁在等事件（epoll / WSAPoll）
+ *   Wakeup      怎么从别的线程叫醒一个睡在 wait() 里的人
+ *   Shard       一条线程 + 一个 Poller + 一批连接（连接的唯一所有者）
+ *   Listener    只管 accept，然后把连接交给某个分片
+ *   Net         装配与启停
  */
 class Net : public ShineBasicModule
 {
 public:
     Net();
-    ~Net();
+    ~Net() override;
+
     std::string moduleName() const override
     {
         return kNetModuleName;
     }
 
     void startUp(const int &port);
-    /**启动网络服务并阻塞等待客户端 */
-    void run();
+
     /**
-     * @brief 请求事件循环退出。
+     * @brief 启动网络服务并阻塞，直到 stop() 被调用。
      *
-     * 只置标志、不关 socket：事件循环在自己的线程里发现标志后自行退出，
-     * 连接清理仍由它负责。从别的线程 close 监听 fd 会和 accept/poll 抢同一个描述符，
-     * 这类竞争在退出路径上表现为偶发崩溃，而不是稳定复现的错误。
+     * 「阻塞」是刻意的：调用方（Application）用一条后台线程跑它，
+     * 于是这条线程的结束就等于「网络服务已停」，不需要另外的完成信号。
+     */
+    void run();
+
+    /**
+     * @brief 请求停止。
      *
-     * 可以在任意线程调用；实际退出延迟最多一个 poll 超时（1 秒）。
+     * 只置标志并唤醒等待中的 run()，**不关任何 socket**：监听 fd 由 run() 在自己的
+     * 收尾流程里关闭。从别的线程 close 监听 fd 会和 accept 抢同一个描述符，
+     * 这类竞争在退出路径上表现为「偶发崩溃」，而不是稳定复现的错误。
+     *
+     * 可以在任意线程调用。
      */
     void stop();
 
 private:
-    /**申请服务器Socket */
+    /**申请本机网络服务（Windows 上是 WSAStartup） */
     bool applyNetworkServer();
-    /**创建专门负责客户端连接请求的Socket */
+    /**创建监听 socket 并设为非阻塞 */
     bool createAcceptSocket();
     /**绑定 */
     bool stepBind(const int &port);
-    /**监听*/
+    /**监听 */
     bool stepListen();
-    SocketType _acceptSocket = INVALID_SOCKET; /**一个专门负责接受客户端连接请求的socket */
-    std::atomic<bool> _stopRequested{false};   /**退出请求：由 stop() 置位，事件循环自己检查 */
+    /** 关闭监听 socket（只由 run() 的收尾流程调用） */
+    void closeListenSocket();
+
+    SocketType _acceptSocket = kInvalidSocket; /** 只管 accept 的监听 socket */
+
+    std::atomic<bool> _stopRequested{false}; /** 退出请求：由 stop() 置位 */
+    std::mutex _stopMutex;                   /** 只用于让 run() 睡在条件变量上 */
+    std::condition_variable _stopCondition;  /** stop() 用它把 run() 叫醒 */
 };
 
 #endif // INKING_BACKEND_FRAMEWORK_NET_H

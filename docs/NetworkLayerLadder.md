@@ -3,8 +3,9 @@
 > 配套文档：[NetworkLayerDesign.md](./NetworkLayerDesign.md)（目的地地图，回答「我们要做成什么样」）。
 > 这份文档回答另一个问题：**今天下午该敲哪几行**。
 >
-> 状态：A1、A2、A3 已完成（2026-09-18 ~ 09-22；A4、A5 已并入 A6）。**A6 已完成（2026-09-22，Windows 实测；
-> Linux 侧待复验，见 §6 末尾）。下一阶：B1。** 每完成一阶就在这里更新状态。
+> 状态：A1、A2、A3 已完成（2026-09-18 ~ 09-22；A4、A5 已并入 A6）。A6 已完成（2026-09-22，Windows 实测；
+> Linux 侧待复验，见 §6 末尾）。**B1、B2、B3 已完成（2026-11-04，一次做完，见 §6.2）。
+> 下一阶：C1（接 `FrameCodec`，半包粘包）。** 每完成一阶就在这里更新状态。
 
 ---
 
@@ -71,10 +72,10 @@
 | A4 | ~~改成非阻塞，故意用 sleep 忙等~~ | — | — | 跳过（并进 A6） |
 | A5 | ~~用 `poll` 换掉忙等，单线程管 N 条连接~~ | M1 | — | 跳过（并进 A6；参考实现 `tests/reactor_demo.cpp`） |
 | A6 | 换 `epoll`（Linux）跑到 1000 条连接（含非阻塞 + 单线程管 N 条） | M1 | 2~3 小时 | 已完成（Windows 侧，Linux 待复验） |
-| B1 | 抽出 Poller 接口 + 平台实现 | M1 | 1 小时 | 未开始 |
-| B2 | Connection 对象 + 连接表 + 每连接读缓冲 | M3 | 1 小时 | 未开始 |
-| B3 | Shard 类（一条线程一个 Poller） | M4 | 1 小时 | 未开始 |
-| C1 | 接上帧解析（复用 `FrameCodec`），半包粘包 | M6 | — | 未开始 |
+| B1 | 抽出 Poller 接口 + 平台实现 | M1 | 1 小时 | 已完成（2026-11-04） |
+| B2 | Connection 对象 + 连接表 + 每连接读缓冲 | M3 | 1 小时 | 已完成（2026-11-04） |
+| B3 | Shard 类（一条线程一个 Poller） | M4 | 1 小时 | 已完成（2026-11-04，含 M2 唤醒器与 M5 接入线程） |
+| C1 | 接上帧解析（复用 `FrameCodec`），半包粘包 | M6 | — | 未开始（下一阶） |
 | C2 | 连接状态机 + 一条在飞 | M3 / M7 | — | 未开始 |
 | C3 | 业务派发（先投 `TaskQueueLoop`）+ 响应回投 | M7 | — | 未开始 |
 | C4 | 唤醒器（eventfd / 回环 UDP） | M2 | — | 未开始 |
@@ -386,10 +387,90 @@ python3 tools/netbench/edge_cases.py
 
 ---
 
-## 7. A6 之后
+## 6.2 B 阶段实现记录（2026-11-04，B1+B2+B3 一次做完）
 
-**A6 已跑通（Windows 实测，验收五条全过；Linux 复验见 §6.1）。** 下一阶 B1：抽出 `Poller` 接口 + 平台实现，
-把 `epoll` 藏到接口后面——规格等这一阶开始时再给。
+### 落地位置与形状
+
+A6 那套东西原来全挤在 `Net.cpp` 的匿名 namespace 里（`Connection` / `ConnPoller` / `ConnShard`）。
+B 阶段把它拆成了「一层一件事」，每一层单独一个文件：
+
+| 文件 | 干什么 | 对应设计文档 |
+| --- | --- | --- |
+| `include/network/SocketOps.h` + `src/network/SocketOps.cpp` | 平台语义收口：句柄类型、非阻塞、`wouldBlock`、发送标志、关闭 | M1 交付物 |
+| `include/network/Poller.h` + `src/network/Poller.cpp` | `Poller` 接口 + `EpollPoller` / `PollPoller` 两个实现 | M1 |
+| `include/network/Wakeup.h` + `src/network/Wakeup.cpp` | 唤醒器（回环 UDP 自投递） | M2 |
+| `include/network/Connection.h` | 连接状态 + 读写缓冲 + 状态机 | M3 |
+| `include/network/Shard.h` + `src/network/Shard.cpp` | 一条线程 + 一个 Poller + 一批连接 + 交接队列 | M4 |
+| `include/network/Listener.h` + `src/network/Listener.cpp` | 独立接入线程：循环 accept、挑分片、交接 | M5 |
+| `include/network/NetworkStage.h` | 模块名 + 自检阶段编号（多处共用，抽出来防撞号） | — |
+| `include/network/NetworkConfig.h` + `src/network/NetworkConfig.cpp` + `config/networkConfig.json` | 端口 / 分片数 / 每分片连接上限 | M4 交付物 |
+| `include/network/Net.h` + `src/network/Net.cpp` | 门面：读配置、装配、按序启停 | — |
+
+### 线程形状
+
+```
+主控（TaskQueueLoop 的一条后台线程）  Net::run()
+  ├─ 接入线程 ×1   Listener   只 accept；按「当前连接数最少」挑分片
+  ├─ 分片线程 ×N   Shard      各自一个 Poller + 连接表，互不共享任何状态
+  └─ 业务线程池    TaskQueueLoop（本阶还没接，C3 才用）
+```
+
+一条新连接走的路径（**所有权只转交一次**）：
+
+```
+accept → setNoDelay / setNonBlocking → Shard::adopt(fd)
+       → 交接队列 + 合并唤醒（队列由空变非空才写一次）
+       → 分片线程 drainIncoming：入连接表 + 注册进 Poller → 从此只有这条线程碰它
+```
+
+关闭走的路径（**分两段，中间不许插别的**）：`markClosing()`（只置标记）→ 一轮事件处理完
+→ 清理阶段 `Poller::remove` → `close` → 连接表 erase。顺序反过来就是摘错人。
+
+### 与设计文档对不上的三处，以及理由
+
+1. **唤醒器用回环 UDP，不用 eventfd。** 设计文档 §4.2 给 Linux 首选 `eventfd`。这里统一用
+   「绑在 127.0.0.1 的 UDP socket，`sendto` 给自己」：三个平台一份代码、零 `#ifdef`，
+   而且读端就是普通 fd，和连接走同一条注册路径。代价是每次唤醒多一次用户态拷贝；
+   按「一条在飞 + 合并通知」的设计，唤醒次数远小于请求数，这个代价可以接受。
+   Linux 侧的 `eventfd` 留作性能项，等 M10 基准证明值得再换。
+   —— 这条决定的真正理由是：**本机没有 Linux，写一条没编译过的 `#ifdef` 分支是负债而不是优化。**
+2. **acceptor 是独立线程**（设计笔记「还没定的事」第 2 条的三个选项之一）。理由是压测时
+   「0 号分片比别的分片慢」会污染对分片均衡性的判断；代价是多一条线程、多一次交接。
+3. **分片数进配置**（默认 4）。`NetworkConfig::describe()` 会把实际取值写进日志第一行，
+   所以「当时按几核配的」事后能查。
+
+### 实测（Windows 11 / MSYS2 UCRT64 / g++ 16.2.0，4 分片）
+
+| 量尺 | A6（单分片） | B3（4 分片 + 独立接入线程） |
+| --- | --- | --- |
+| `hold_conns.py 1000 0 --echo` | 1000/1000 | **1000/1000**，建连 0.19~0.22 秒（4500~5300 条/秒） |
+| `stepA2_echo_client 1000 hello` | 1000/1000，QPS 5.4 万 | **1000/1000，QPS 5.74 万** |
+| `hold_conns.py 1000 15` | 1000 条全部保持 | **1000 条全部保持，0 条被断** |
+| `edge_cases.py`（RST / 半包 / 粘包 / 5000B / 复用） | 5 项全过 | **5 项全过** |
+| 分片峰值连接（退出时各分片自报） | — | **250 / 250 / 250 / 250**（1000 条，与「连接数最少」策略一致） |
+| 句柄数（空闲 / 1000 连接 / 全断） | 144 / 900+ / 144 | **206 / 1206 / 206**（+62 是 4 个分片 + 接入线程各一个唤醒 socket 及其它新增阶段） |
+| 停机 | kill（未验优雅退出） | **控制台 `exit`：退出码 0**，顺序为接入 → 分片 → 关监听，0 条 WARN/ERROR |
+| 线程数 | 15 | **19**（4 分片 + 1 接入 + 业务池 10 + 控制台/日志侧） |
+
+### 这一阶留下的债（按文档，属于后面几阶）
+
+- **Linux `epoll` 分支仍未在 Linux 上编译运行过**（A6 遗留，B1 只是把它整体挪进了
+  `Poller.cpp` 的 `EpollPoller`）。要复验的接口点已经收拢到一处。
+- 连接的关闭是**硬关**：`markClosing` 之后直接 close，不排空写缓冲。优雅关闭属 C6。
+- 连接上限到顶时直接拒绝新连接，没有用「预留一个空闲 fd」的技巧应付 `EMFILE`。
+  也没做「暂停 accept 一段时间」的过载退避。
+- 还没有定时器：`Shard` 里 `wait` 的超时固定 1000ms，C5 要把它改成「最近一个定时器到期时刻」。
+- **echo 语义还在**：读到的字节直接进写缓冲。`Connection::receiveBuffer` 已就位但没有消费者，
+  C1 接 `FrameCodec` 时改成「追加 → 循环拆帧 → 拆出一整帧才处理」。
+- 每分片连接上限是「峰值判断」，不是「实时水位」：清理阶段之前被标记关闭的连接仍占一个名额，
+  对上限 1000 的粒度没有影响，但如果以后要把上限调到很小的值，需要改成按 `_connections.size()` 判。
+
+---
+
+## 7. B 阶段之后
+
+**B1/B2/B3 已跑通（Windows 实测，A6 五条验收全部复跑通过）。** 下一阶 C1：把 `FrameCodec`
+接进 `Shard::readFrom`，让半包/粘包成为常态路径——规格等这一阶开始时再给。
 **提前看后面的只会让你重新卡住一次**，这正是这份文档要避免的事。
 
 ---

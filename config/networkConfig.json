@@ -1,0 +1,7 @@
+{
+    "networkConfig": {
+        "port": 9000,
+        "shardCount": 4,
+        "maxConnectionsPerShard": 1000
+    }
+}

@@ -218,6 +218,12 @@ set(INKING_SOURCES
     src/thread/ThreadPool.cpp
     src/thread/TaskQueueLoop.cpp
     src/network/Net.cpp
+    src/network/SocketOps.cpp
+    src/network/Poller.cpp
+    src/network/Wakeup.cpp
+    src/network/NetworkConfig.cpp
+    src/network/Shard.cpp
+    src/network/Listener.cpp
     basic/ShineBasicModule.cpp
     basic/ShineLog.cpp
     basic/ShineStatusChecker.cpp

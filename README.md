@@ -310,6 +310,39 @@ WantedBy=multi-user.target
 `LOG/` and `config/` are resolved relative to the **executable**, not the working directory, so `WorkingDirectory`
 is not load-bearing for them; the startup banner prints the absolute log path anyway.
 
+### 6.2 Network configuration
+
+`config/networkConfig.json` (copied to `build/bin/config/` on the first build):
+
+```json
+{
+    "networkConfig": {
+        "port": 9000,
+        "shardCount": 4,
+        "maxConnectionsPerShard": 1000
+    }
+}
+```
+
+| Field | Meaning | Missing / invalid behaviour |
+| --- | --- | --- |
+| `port` | listening port | falls back to 9000 |
+| `shardCount` | number of shards; each shard is one thread plus one event set | falls back to 4, clamped to 1..64 |
+| `maxConnectionsPerShard` | per-shard connection ceiling; connections beyond it are closed and logged | falls back to 1000, clamped to 1..100000 |
+
+A missing or malformed file is **not** fatal: the network service still starts, using defaults, and the first
+`Net:05` log line records both what was read and where it came from.
+
+Runtime shape once started — one acceptor thread plus `shardCount` shard threads:
+
+```
+client ──TCP──► Listener (accept only) ──least-connections──► Shard 0..N-1 (own thread + own event set)
+```
+
+New connections are handed over through a locked queue plus a coalesced wake-up, so a shard that is busy
+receives one wake-up for many arrivals. Each connection is owned by exactly one shard, and only that shard
+thread ever touches its socket or buffers.
+
 
 ## 7. Protocol: frame format and messages
 
@@ -371,7 +404,7 @@ Implemented in `include/protocol/ProtocolFrame.h`, `include/protocol/FrameCodec.
 | Linker errors mentioning protobuf | protobuf built for a different ABI (MSVC vs MinGW) or a different version | use the protobuf that matches the compiler you configure with |
 | Generated `.pb.cc` fails to compile | `protoc` and runtime versions differ | same version for both, or use the downloaded copy |
 | Configure fails with "MySQL client library not found" | MySQL development files missing while `INKING_ENABLE_MYSQL=ON` | [section 4.2](#42-install), or turn the option off |
-| Changes to `config/databaseConfig.json` have no effect | the program reads the copy under `build/bin/config/` | edit `build/bin/config/databaseConfig.json` |
+| Changes to `config/*.json` have no effect | the program reads the copies under `build/bin/config/`, and CMake only copies a file when it is missing | edit `build/bin/config/<file>.json`, or delete that copy and rebuild |
 | Console shows garbled Chinese | console code page or a non-UTF-8 source file | the program sets UTF-8 itself; keep every source file UTF-8 (section 9) |
 
 ## 9. Encoding rules
@@ -392,7 +425,7 @@ include/       Public headers, grouped by domain: command/ database/ protocol/ t
 src/           Implementations, mirroring include/
 proto/         protobuf message definitions (C++ is generated from these; generated files are not committed)
 third_party/   Vendored libraries: replxx, nlohmann_json
-config/        Runtime configuration template (databaseConfig.json)
+config/        Runtime configuration template (databaseConfig.json, networkConfig.json)
 cmake/         CMake helper scripts, patches/ for protobuf, CMakeUserPaths.cmake for local path overrides (git-ignored)
 build/         Build output, including the downloaded protobuf source under build/_deps/ (git-ignored)
 ```
