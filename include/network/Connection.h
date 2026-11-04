@@ -26,6 +26,7 @@
 
 #include "network/Poller.h"
 #include "network/SocketOps.h"
+#include "protocol/FrameCodec.h"
 
 #include <cstddef>
 #include <vector>
@@ -38,13 +39,40 @@ enum class ConnectionState
     Closing
 };
 
+/**
+ * @brief 连接为什么被关掉。
+ *
+ * 分成枚举而不是「随手写一条日志」，是因为这几类的处理方式不同：
+ * 对端关闭是正常事件（不告警），收/发错误是环境问题（要能统计），
+ * 非法帧和慢消费者是**对端行为问题**（要能一眼看出被谁拖累）。
+ * 混在一起记日志的话，1000 条正常断开会把真正的异常淹掉。
+ */
+enum class CloseReason
+{
+    None,
+    PeerClosed,    /** recv 返回 0：对端正常关闭 */
+    ReceiveError,  /** recv 报错，或被对端 RST */
+    SendError,     /** send 报错 */
+    InvalidFrame,  /** 帧头不合法：这条流已不可信 */
+    SlowConsumer,  /** 写缓冲积压超过上限：对端只发不读 */
+};
+
 struct Connection
 {
     SocketType socket = kInvalidSocket;
     ConnectionState state = ConnectionState::Idle;
 
-    /** 已收到、还没被处理掉的字节。C1 接上 FrameCodec 之后它是半包/粘包的落点 */
-    std::vector<char> receiveBuffer;
+    /**
+     * @brief 这条连接的帧解析器，同时也是这条连接唯一的读缓冲。
+     *
+     * **每连接一份**，不是每分片一份：`FrameCodec` 内部有「已收到但还没拆出一帧」的
+     * 缓冲，那是连接级状态——两条连接的半帧混进同一个缓冲，字节就串了。
+     *
+     * 原来这里另有一个 `receiveBuffer`，接上 `FrameCodec` 之后两者是同一件事的
+     * 两个位置，保留两份必须手工同步，漏一次就是半包丢失。所以**只留一份**：
+     * 缓冲在 `FrameCodec` 里，`pendingBytes()` 就是「还没拼成整帧的字节数」。
+     */
+    FrameCodec codec;
 
     /**
      * 还没发完的字节 + 发到哪儿的游标。
@@ -63,6 +91,9 @@ struct Connection
      */
     unsigned interest = PollerBits::Read;
 
+    /** 断开原因，只在关闭时写一次；用于计数与「这条连接为什么没了」的追溯 */
+    CloseReason closeReason = CloseReason::None;
+
     bool isOpen() const
     {
         return socket != kInvalidSocket;
@@ -71,6 +102,12 @@ struct Connection
     bool hasPendingSend() const
     {
         return sendOffset < sendBuffer.size();
+    }
+
+    /** 还没发出去的字节数（背压判定的依据） */
+    std::size_t pendingSendBytes() const
+    {
+        return sendBuffer.size() - sendOffset;
     }
 
     /** 把待发送的字节接在写缓冲后面（不会覆盖没发完的部分） */
@@ -83,7 +120,13 @@ struct Connection
         sendBuffer.insert(sendBuffer.end(), data, data + length);
     }
 
-    /** 写缓冲清空：整块丢掉并把游标归零，不要留着一个越来越大的空 vector */
+    /**
+     * @brief 写缓冲清空。
+     *
+     * 小缓冲不还内存：echo 这种「发完立刻空」的路径上，每次 clear 都顺手 shrink
+     * 会变成每请求一次 malloc/free，热路径上很贵。只有大包（> 64 KiB）才真的
+     * 把容量还回去——那才是「一条连接长期占着大块内存」的场景。
+     */
     void clearSentData()
     {
         if (sendBuffer.empty())
@@ -91,8 +134,11 @@ struct Connection
             return;
         }
         sendBuffer.clear();
-        sendBuffer.shrink_to_fit();
         sendOffset = 0;
+        if (sendBuffer.capacity() > 64 * 1024)
+        {
+            sendBuffer.shrink_to_fit();
+        }
     }
 
     /**

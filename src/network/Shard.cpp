@@ -18,6 +18,37 @@ namespace
     constexpr int kWakeTimeoutMs = 1000;
     /** 单次 recv 的临时缓冲。它是栈上的，不随连接数增长 */
     constexpr std::size_t kReceiveChunk = 4096;
+
+    /**
+     * @brief 单条连接允许积压的待发送字节上限（慢消费者防护）。
+     *
+     * 判定的口径是「原本就有积压，再加这一帧会超限」才断开——所以单条大帧
+     * （最大 16 MiB）在缓冲为空时总能发出去，不会被这条规则误杀。
+     *
+     * 没有这条上限的话，一个只发不读的客户端会让服务端的写缓冲跟着它的发送量一起长大，
+     * 那是「被一个客户端拖垮整台机器」的标准路径。
+     */
+    constexpr std::size_t kMaxPendingSendBytes = 4 * 1024 * 1024;
+
+    const char *closeReasonText(CloseReason reason)
+    {
+        switch (reason)
+        {
+        case CloseReason::PeerClosed:
+            return "对端关闭";
+        case CloseReason::ReceiveError:
+            return "接收出错";
+        case CloseReason::SendError:
+            return "发送出错";
+        case CloseReason::InvalidFrame:
+            return "帧头不合法";
+        case CloseReason::SlowConsumer:
+            return "写缓冲积压超限（对端只发不读）";
+        case CloseReason::None:
+            break;
+        }
+        return "未知原因";
+    }
 }
 
 Shard::Shard(std::size_t index, std::size_t maxConnections)
@@ -143,7 +174,13 @@ void Shard::serve()
     closeAllConnections();
 
     ShineLog::log(LogLevel::Info, kNetModuleName, NetworkStage::kShard,
-                  name() + " 已退出，峰值连接 " + std::to_string(_peakConnections));
+                  name() + " 已退出，峰值连接 " + std::to_string(_peakConnections) +
+                      "，累计拆帧 " + std::to_string(_counters.frames) +
+                      "，关闭原因：对端 " + std::to_string(_counters.peerClosed) +
+                      " / 收错 " + std::to_string(_counters.receiveError) +
+                      " / 发错 " + std::to_string(_counters.sendError) +
+                      " / 非法帧 " + std::to_string(_counters.invalidFrame) +
+                      " / 慢消费者 " + std::to_string(_counters.slowConsumer));
 }
 
 void Shard::drainIncoming()
@@ -256,7 +293,7 @@ void Shard::readFrom(Connection *connection)
         {
             // 可读不等于有数据：recv 返回 0 就是对端关闭。
             // 这也是「对端关闭」唯一可靠的判定方式（WSAPoll 的 POLLHUP 不能作数）。
-            closeConnection(connection);
+            closeConnection(connection, CloseReason::PeerClosed);
             return;
         }
 
@@ -267,17 +304,76 @@ void Shard::readFrom(Connection *connection)
                 break; // 这一轮的数据读完了
             }
             // 连接被重置（客户端强杀）也会走到这里，不是「服务坏了」
-            closeConnection(connection);
+            closeConnection(connection, CloseReason::ReceiveError);
             return;
         }
 
-        // 当前阶段（B3）仍是 echo：读到的字节直接进写缓冲。
-        // C1 接上 FrameCodec 之后，这里改成「追加到 receiveBuffer → 循环拆帧」，
-        // 拆出一整帧才进写缓冲／派发。读写缓冲各一份的理由在那时才完全体现出来。
-        connection->appendSend(buffer, static_cast<std::size_t>(receivedBytes));
+        // 关键一步：字节交给这条连接自己的解析器，由它判断「到哪儿是一条消息」。
+        // 每读一块就立刻拆一遍，而不是把整轮数据攒起来再拆——一个猛发 100 MiB
+        // 的客户端因此只能让缓冲长到一个 recv 块的大小，而不是 100 MiB。
+        connection->codec.push(buffer, static_cast<std::size_t>(receivedBytes));
+
+        if (!consumeFrames(connection))
+        {
+            return; // 出帧阶段已经把这条连接关掉了
+        }
     }
 
     flush(connection);
+}
+
+bool Shard::consumeFrames(Connection *connection)
+{
+    CommandFrame frame;
+    while (true)
+    {
+        const FrameCodec::Status status = connection->codec.next(frame);
+
+        if (status == FrameCodec::Status::NeedMoreData)
+        {
+            return true; // 半帧：留着，等下一次 recv 补齐
+        }
+
+        if (status == FrameCodec::Status::InvalidFrame)
+        {
+            // 帧层已经丢了缓冲。这里必须断连接：错位一旦发生，后面每一帧都会跟着错，
+            // 在同一个字节流上继续解析没有意义（理由见 ProtocolFrame.h）。
+            closeConnection(connection, CloseReason::InvalidFrame);
+            return false;
+        }
+
+        // 到这里才第一次拥有「一条完整消息」
+        ++_counters.frames;
+        if (!replyFrame(connection, frame))
+        {
+            return false;
+        }
+    }
+}
+
+bool Shard::replyFrame(Connection *connection, const CommandFrame &frame)
+{
+    // C3 之前这里就是回显：把解出来的帧原样组帧发回去。
+    // 它一次验证两条路径——decode 与 encode：客户端收到的字节必须与发出的逐字节相同。
+    // C3 之后这一段换成「查注册表 → 业务处理 → 组响应帧」。
+    std::string response;
+    if (FrameCodec::encode(frame, response) != FrameCodec::Status::Ok)
+    {
+        // 解码能过、编码不过，说明帧本身在两侧的判定不一致，属于代码缺陷，
+        // 但处理方式与非法帧相同：这条连接不再可信。
+        closeConnection(connection, CloseReason::InvalidFrame);
+        return false;
+    }
+
+    const std::size_t pending = connection->pendingSendBytes();
+    if (pending > 0 && pending + response.size() > kMaxPendingSendBytes)
+    {
+        closeConnection(connection, CloseReason::SlowConsumer);
+        return false;
+    }
+
+    connection->appendSend(response.data(), response.size());
+    return true;
 }
 
 void Shard::flush(Connection *connection)
@@ -300,7 +396,7 @@ void Shard::flush(Connection *connection)
         // 0 和 wouldBlock 都是「发送缓冲满了」：剩下的字节留着等可写事件
         if (sentBytes < 0 && !SocketOps::wouldBlock())
         {
-            closeConnection(connection);
+            closeConnection(connection, CloseReason::SendError);
             return;
         }
         break;
@@ -338,12 +434,42 @@ void Shard::updateInterest(Connection *connection)
     }
 }
 
-void Shard::closeConnection(Connection *connection)
+void Shard::closeConnection(Connection *connection, CloseReason reason)
 {
     if (!connection->isOpen())
     {
         return;
     }
+
+    connection->closeReason = reason;
+
+    switch (reason)
+    {
+    case CloseReason::PeerClosed:
+        ++_counters.peerClosed;
+        break;
+    case CloseReason::ReceiveError:
+        ++_counters.receiveError;
+        break;
+    case CloseReason::SendError:
+        ++_counters.sendError;
+        break;
+    case CloseReason::InvalidFrame:
+        ++_counters.invalidFrame;
+        break;
+    case CloseReason::SlowConsumer:
+        ++_counters.slowConsumer;
+        break;
+    case CloseReason::None:
+        break;
+    }
+
+    // 对端正常关闭是预期事件，写 Trace（默认阈值下不落盘，需要时调 `log level trace` 就能看到）；
+    // 其余五类都是「值得留证据」的，写 Warn。同一条消息会被日志系统折叠成一行 + ×N。
+    const LogLevel level = (reason == CloseReason::PeerClosed) ? LogLevel::Trace : LogLevel::Warn;
+    ShineLog::log(level, kNetModuleName, NetworkStage::kShard,
+                  name() + " 断开连接：" + closeReasonText(reason));
+
     _closing.push_back(connection->socket);
     connection->markClosing(); // 标记成「已关」，本轮内不会再用它收发
 }

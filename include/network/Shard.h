@@ -94,13 +94,27 @@ private:
 
     void handleEvent(const PollerEvent &event);
     void readFrom(Connection *connection);
+
+    /**
+     * @brief 把 `FrameCodec` 里已经凑齐的帧一帧一帧取出来处理。
+     *
+     * @return false 表示这条连接已经在处理过程中被关掉，调用方不要再碰它。
+     *
+     * 读一次字节 → 循环拆帧直到 `NeedMoreData`，是 M6 要求的形状：
+     * 一次 `recv` 可能拿到半帧、一帧、多帧，三件事都要在同一条路径上处理。
+     */
+    bool consumeFrames(Connection *connection);
+
+    /** 处理一条完整消息。C3 之前这里是回显（原样组帧发回） */
+    bool replyFrame(Connection *connection, const CommandFrame &frame);
+
     void flush(Connection *connection);
 
     /** 更新关注的事件位；和当前一致时不做系统调用 */
     void updateInterest(Connection *connection);
 
     /** 只做登记：真正的摘除 + close 在一轮事件处理结束之后的清理阶段 */
-    void closeConnection(Connection *connection);
+    void closeConnection(Connection *connection, CloseReason reason);
     void removeClosedConnections();
     void closeAllConnections();
 
@@ -131,6 +145,23 @@ private:
     std::vector<SocketType> _closing;
     /** 峰值连接数：退出时记一条，用于判断「分片是否被均衡分配」 */
     std::size_t _peakConnections = 0;
+
+    /**
+     * @brief 累计计数，只在分片线程里读写（所以不需要原子）。
+     *
+     * 存在的理由是「不要为正常事件刷日志」：1000 条连接正常断开会写 1000 行日志，
+     * 真正的异常会被淹掉。正常关闭只累加计数、写 Trace；异常原因才写 Warn。
+     * 退出时把这些数一次性打进日志，够回溯。
+     */
+    struct Counters
+    {
+        std::size_t frames = 0;        /** 成功拆出并处理的帧数 */
+        std::size_t peerClosed = 0;    /** 对端正常关闭 */
+        std::size_t receiveError = 0;  /** 收出错或被 RST */
+        std::size_t sendError = 0;     /** 发出错 */
+        std::size_t invalidFrame = 0;  /** 帧头不合法 */
+        std::size_t slowConsumer = 0;  /** 写缓冲积压超限 */
+    } _counters;
 
     /** 复用的事件缓冲，避免每轮都分配一次 */
     std::vector<PollerEvent> _ready;

@@ -343,6 +343,12 @@ New connections are handed over through a locked queue plus a coalesced wake-up,
 receives one wake-up for many arrivals. Each connection is owned by exactly one shard, and only that shard
 thread ever touches its socket or buffers.
 
+Since C1 (see `docs/NetworkLayerLadder.md` §6.3) every connection is parsed with `FrameCodec`: a stream whose
+first two bytes are not the protocol magic `0xABCD` is closed immediately, and one frame is one message.
+Acceptance moved to `tools/netbench/framed_client.py` (echo, half packet, sticky packet, big frame, three
+invalid-frame cases, 1000 idle connections). `hold_conns.py` and `edge_cases.py` send raw bytes and therefore
+only apply to the pre-C1 server; their headers say so.
+
 
 ## 7. Protocol: frame format and messages
 

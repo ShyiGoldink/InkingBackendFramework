@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """保持 N 条连接，可选让每条各发一次并校验回显。
 
+【适用范围】本脚本发的是**裸字节**，只适用于 A6 时代的 echo 服务端。
+C1 之后服务端只认带帧协议（魔数不对直接断），请改用 framed_client.py。
+
 用法：
     python3 tools/netbench/hold_conns.py [条数] [保持秒数] [--echo] [--timeout 秒] [--host H] [--port P]
 

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """A6 验收第 4 条：RST 异常断开 / 半包 / 全部关闭后不泄漏。
 
+【适用范围】本脚本发的是**裸字节**，只适用于 A6 时代的 echo 服务端。
+C1 之后服务端只认带帧协议，改由 framed_client.py 覆盖（半包/粘包/非法帧都在那里）。
+
 用法：
     python3 tools/netbench/edge_cases.py [--host H] [--port P]
 
