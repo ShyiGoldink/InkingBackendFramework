@@ -17,13 +17,32 @@ namespace
     constexpr std::size_t kMaxConnectionsPerShard = 100000;
     constexpr int kMinPort = 1;
     constexpr int kMaxPort = 65535;
+    /** 超时上限一小时：再长就等于「不设」，不如让人直接写 0 */
+    constexpr int kMinTimeoutMs = 0;
+    constexpr int kMaxTimeoutMs = 3600000;
+
+    int clampTimeout(int value)
+    {
+        return std::clamp(value, kMinTimeoutMs, kMaxTimeoutMs);
+    }
+}
+
+std::string NetworkTimeouts::describe() const
+{
+    // 0 单独写成「关」，否则日志里一串 0 很容易被读成「立即超时」
+    const auto text = [](int value)
+    {
+        return value > 0 ? std::to_string(value) + "ms" : std::string("关");
+    };
+    return "半包 " + text(halfFrameMs) + " / 空闲 " + text(idleMs) + " / 写 " + text(writeMs);
 }
 
 std::string NetworkConfig::describe() const
 {
     return "端口 " + std::to_string(port) +
            "，分片 " + std::to_string(shardCount) +
-           "，每分片连接上限 " + std::to_string(maxConnectionsPerShard);
+           "，每分片连接上限 " + std::to_string(maxConnectionsPerShard) +
+           "，超时（" + timeouts.describe() + "）";
 }
 
 NetworkConfig loadNetworkConfig(std::string &note)
@@ -50,6 +69,9 @@ NetworkConfig loadNetworkConfig(std::string &note)
     const auto port = jsonTool.getValue<int>(*node, "port");
     const auto shardCount = jsonTool.getValue<int>(*node, "shardCount");
     const auto maxConnections = jsonTool.getValue<int>(*node, "maxConnectionsPerShard");
+    const auto halfFrameTimeout = jsonTool.getValue<int>(*node, "halfFrameTimeoutMs");
+    const auto idleTimeout = jsonTool.getValue<int>(*node, "idleTimeoutMs");
+    const auto writeTimeout = jsonTool.getValue<int>(*node, "writeTimeoutMs");
 
     if (port.has_value())
     {
@@ -69,6 +91,19 @@ NetworkConfig loadNetworkConfig(std::string &note)
         config.maxConnectionsPerShard = static_cast<std::size_t>(
             std::clamp<long long>(value, static_cast<long long>(kMinConnectionsPerShard),
                                   static_cast<long long>(kMaxConnectionsPerShard)));
+    }
+
+    if (halfFrameTimeout.has_value())
+    {
+        config.timeouts.halfFrameMs = clampTimeout(*halfFrameTimeout);
+    }
+    if (idleTimeout.has_value())
+    {
+        config.timeouts.idleMs = clampTimeout(*idleTimeout);
+    }
+    if (writeTimeout.has_value())
+    {
+        config.timeouts.writeMs = clampTimeout(*writeTimeout);
     }
 
     note = "已从 " + filePath + " 读取：" + config.describe();

@@ -33,8 +33,10 @@
  */
 
 #include "network/Connection.h"
+#include "network/NetworkConfig.h"
 #include "network/Poller.h"
 #include "network/ShardMailbox.h"
+#include "network/TimerQueue.h"
 #include "network/Wakeup.h"
 
 #include <atomic>
@@ -55,8 +57,9 @@ public:
      * @param maxConnections 连接上限。到顶之后新连接会被直接关掉并记一条 Warn，
      *        而不是「先接下来再说」——已经满负荷的分片再吃新连接，会让它管的
      *        全部连接一起变慢，那是最糟的过载处理方式。
+     * @param timeouts 三类超时（C5）。0 表示不启用该类超时
      */
-    Shard(std::size_t index, std::size_t maxConnections);
+    Shard(std::size_t index, std::size_t maxConnections, const NetworkTimeouts &timeouts);
     ~Shard();
 
     Shard(const Shard &) = delete;
@@ -134,6 +137,33 @@ private:
     /** 写缓冲清空后：回到 Idle、恢复读关注、把 codec 里压着的帧接着拆 */
     void resumeReading(Connection *connection);
 
+    /**
+     * @brief 按连接当前状态挂/摘三类定时器（C5）。
+     *
+     * 所有挂载与摘除都只发生在这一个函数里，调用点是「状态或缓冲区刚变过」的地方。
+     * 不这么做的话，判断条件会被写在下标不同的四五处（拆帧后、写完后、派发前……），
+     * 与 `updateInterest` 当初的理由一样：两处各写一半，早晚漏掉一处。
+     *
+     * 三类超时的语义并不统一，这是刻意的：
+     * - 空闲 / 写：**顺延**。对端每有进展就重新计时，抓的是「彻底不动了」。
+     * - 半包：**不顺延**。从第一个残字节起算绝对期限，抓的是「一直在挤、但挤不完」。
+     *   顺延的话，每秒发 1 个字节就能让一条连接无限期占着缓冲。
+     */
+    void refreshTimers(Connection *connection);
+
+    /**
+     * @brief 挂一个「可以顺延」的定时器：剩余时间还过半就保持原样。
+     *
+     * 为什么需要这个折中：`refreshTimers` 会在每个事件之后被调用，如果每次都重挂，
+     * 每次 `arm` 都会压一个堆条目（旧条目变成陈旧条目），1000 条连接满负荷时
+     * 能造出每秒百万级的条目——压紧的开销反而超过定时器本身的价值。
+     * 半程才顺延，刷新频率就被钉在「每半个超时周期最多一次」。
+     */
+    void armRefreshingTimer(Connection *connection, TimeoutKind kind, int timeoutMs);
+
+    /** 处理已到期的定时器：只标记关闭，真正销毁留给清理阶段 */
+    void handleTimeouts();
+
     /** 只做登记：真正的摘除 + close 在一轮事件处理结束之后的清理阶段 */
     void closeConnection(Connection *connection, CloseReason reason);
     void removeClosedConnections();
@@ -143,8 +173,21 @@ private:
 
     const std::size_t _index;
     const std::size_t _maxConnections;
+    const NetworkTimeouts _timeouts;
 
     std::thread _thread;
+
+    /**
+     * @brief 本分片的定时器堆（C5）。
+     *
+     * 每个分片一份而不是全局一份：定时器的消费者是分片线程里的连接状态机，
+     * 全局一份就要跨线程取、跨线程回写，每次超时都要抢锁——而这件事每毫秒都在
+     * 每个分片里发生一次。分开之后它和连接表一样只归本线程所有，无锁。
+     */
+    TimerQueue _timers;
+
+    /** 本轮到期的定时器（复用，避免每轮分配） */
+    std::vector<ExpiredTimer> _expired;
 
     /**
      * 声明顺序就是销毁顺序的逆序，所以这两个成员的位置有讲究：
@@ -204,6 +247,9 @@ private:
         std::size_t invalidFrame = 0;   /** 帧头不合法 */
         std::size_t unknownCommand = 0; /** 指令名没有注册 */
         std::size_t slowConsumer = 0;   /** 写缓冲积压超限 */
+        std::size_t halfFrameTimeout = 0; /** 半包超时被回收 */
+        std::size_t idleTimeout = 0;      /** 空闲超时被回收 */
+        std::size_t writeTimeout = 0;     /** 写超时被回收 */
     } _counters;
 
     /** 复用的事件缓冲，避免每轮都分配一次 */

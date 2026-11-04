@@ -319,7 +319,10 @@ is not load-bearing for them; the startup banner prints the absolute log path an
     "networkConfig": {
         "port": 9000,
         "shardCount": 4,
-        "maxConnectionsPerShard": 1000
+        "maxConnectionsPerShard": 1000,
+        "halfFrameTimeoutMs": 10000,
+        "idleTimeoutMs": 0,
+        "writeTimeoutMs": 30000
     }
 }
 ```
@@ -329,6 +332,9 @@ is not load-bearing for them; the startup banner prints the absolute log path an
 | `port` | listening port | falls back to 9000 |
 | `shardCount` | number of shards; each shard is one thread plus one event set | falls back to 4, clamped to 1..64 |
 | `maxConnectionsPerShard` | per-shard connection ceiling; connections beyond it are closed and logged | falls back to 1000, clamped to 1..100000 |
+| `halfFrameTimeoutMs` | a connection that sent only part of a frame is closed after this long. The deadline is absolute from the first partial byte, so a client cannot keep itself alive by dripping one byte at a time | falls back to 10000, clamped to 0..3600000 |
+| `idleTimeoutMs` | close a connection with no complete interaction for this long. **0 means disabled**, which is the default: the protocol has no heartbeat, so enabling it will cut any client that stays connected without sending | falls back to 0 (disabled) |
+| `writeTimeoutMs` | close a connection whose send buffer has not drained for this long (the peer reads too slowly or not at all) | falls back to 30000, clamped to 0..3600000 |
 
 A missing or malformed file is **not** fatal: the network service still starts, using defaults, and the first
 `Net:05` log line records both what was read and where it came from.
@@ -345,6 +351,12 @@ thread ever touches its socket or buffers.
 
 Since C1 (see `docs/NetworkLayerLadder.md` §6.3) every connection is parsed with `FrameCodec`: a stream whose
 first two bytes are not the protocol magic `0xABCD` is closed immediately, and one frame is one message.
+
+Since C5 (§6.5) each shard also owns a timer heap, and the event wait is bounded by the nearest deadline instead of
+a fixed 1000 ms. Timeout closes are counted separately (`半包超时 / 空闲超时 / 写超时`) and reported in the shard's
+exit summary. Note the platform difference: the write timeout cannot be triggered on Windows loopback, because the
+kernel buffers the whole response (up to the 16 MiB frame limit) and `send` never reports "would block"; it is
+covered by tests on Linux only.
 Acceptance moved to `tools/netbench/framed_client.py` (echo, half packet, sticky packet, big frame, ordering,
 ping, unknown command, three invalid-frame cases, slow consumer, 1000 idle connections). `hold_conns.py` and
 `edge_cases.py` send raw bytes and therefore only apply to the pre-C1 server; their headers say so.

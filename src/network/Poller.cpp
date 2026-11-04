@@ -6,6 +6,13 @@
 #include <limits>
 #include <thread>
 
+#ifndef _WIN32
+// epoll 的头只在 Linux 侧需要。Windows 侧由 SocketOps.h 带入 winsock2.h。
+// 这一行曾经漏掉过：epoll 分支在没有 Linux 编译验证的情况下写了三个月，
+// 一直到 C5 阶段真拿 Linux 编才发现（见 docs/NetworkLayerLadder.md §6.5）。
+#include <sys/epoll.h>
+#endif
+
 namespace
 {
     /** 一轮最多取回多少个就绪事件。取太多会让单个事件的处理延迟被一批放大 */

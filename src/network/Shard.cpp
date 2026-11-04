@@ -15,9 +15,13 @@ namespace
     /**
      * 一轮最多等多久。
      *
-     * 有唤醒器兜底，这个超时已经不是「响应速度」了，只是安全网：
-     * 万一条唤醒路径出问题，分片最多卡 1 秒还能自己醒过来检查一次退出标志。
-     * 反过来说，如果哪天慢了，别第一时间来调这个数——先查唤醒路径。
+     * 定时器（C5）上线后，这个数的角色变了：**它不再决定超时精度**，只是
+     * 「没有任何定时器时的睡眠上限」。分片睡多久由 `TimerQueue::nearestTimeoutMs`
+     * 算出来（有定时器就精确到毫秒），只有在一条连接都没挂定时器时才落到这个上限。
+     *
+     * 保留上限的理由是安全网：万一定时器或唤醒路径出问题，分片最多卡 1 秒
+     * 还能自己醒过来检查一次退出标志。反过来说，如果哪天慢了，别第一时间来调
+     * 这个数——先查唤醒路径。
      */
     constexpr int kWakeTimeoutMs = 1000;
     /** 单次 recv 的临时缓冲。它是栈上的，不随连接数增长 */
@@ -55,6 +59,12 @@ namespace
             return "指令未注册";
         case CloseReason::SlowConsumer:
             return "写缓冲积压超限（对端只发不读）";
+        case CloseReason::HalfFrameTimeout:
+            return "半包超时（收到一部分帧之后再没动静）";
+        case CloseReason::IdleTimeout:
+            return "空闲超时（长时间没有完整交互）";
+        case CloseReason::WriteTimeout:
+            return "写超时（写缓冲长时间没发完）";
         case CloseReason::None:
             break;
         }
@@ -62,8 +72,8 @@ namespace
     }
 }
 
-Shard::Shard(std::size_t index, std::size_t maxConnections)
-    : _index(index), _maxConnections(maxConnections == 0 ? 1 : maxConnections)
+Shard::Shard(std::size_t index, std::size_t maxConnections, const NetworkTimeouts &timeouts)
+    : _index(index), _maxConnections(maxConnections == 0 ? 1 : maxConnections), _timeouts(timeouts)
 {
 }
 
@@ -125,7 +135,8 @@ bool Shard::start(std::string &errorMessage)
     }
 
     ShineLog::log(LogLevel::Info, kNetModuleName, NetworkStage::kShard,
-                  name() + " 已启动，连接上限 " + std::to_string(_maxConnections));
+                  name() + " 已启动，连接上限 " + std::to_string(_maxConnections) +
+                      "，超时（" + _timeouts.describe() + "）");
     return true;
 }
 
@@ -178,8 +189,11 @@ void Shard::serve()
             break;
         }
 
-        // ③ 等事件。醒来有三种可能：有连接可读写、唤醒器被写、超时（安全网）
-        const int readyCount = _poller->wait(_ready, kWakeTimeoutMs);
+        // ③ 等事件。醒来有四种可能：有连接可读写、唤醒器被写、有定时器到期、安全网上限。
+        //    睡多久不是常量，而是「最近一个定时器到期时刻」——这是 C5 的核心：
+        //    分片因此既不会永久阻塞，也不会为了查定时器而空转。
+        const int waitMs = _timers.nearestTimeoutMs(kWakeTimeoutMs);
+        const int readyCount = _poller->wait(_ready, waitMs);
         if (readyCount < 0)
         {
             ShineLog::log(LogLevel::Error, kNetModuleName, NetworkStage::kShard,
@@ -187,13 +201,20 @@ void Shard::serve()
             break;
         }
 
-        // ④ 逐个处理。回调里可能关闭连接，但只是「标记」，真正的销毁在 ⑤
+        // ④ 逐个处理。回调里可能关闭连接，但只是「标记」，真正的销毁在 ⑥
         for (const PollerEvent &event : _ready)
         {
             handleEvent(event);
         }
 
-        // ⑤ 清理阶段。遍历中途删连接就是经典的 use-after-free
+        // ⑤ 到期定时器。必须紧挨着 ⑥，**不能挪到 wait() 之前**：
+        //    wait 正是被「最近的到期时刻」叫醒的，醒来就地处理才是准点；
+        //    放在 wait 之前的话，到期会被推迟一整个等待周期（实测晚了整整 1 秒，
+        //    因为关闭标记留到下一轮清理才生效）。
+        //    这里只标记关闭，真正的 remove + close 在 ⑥。
+        handleTimeouts();
+
+        // ⑥ 清理阶段。遍历中途删连接就是经典的 use-after-free
         removeClosedConnections();
     }
 
@@ -213,7 +234,12 @@ void Shard::serve()
                       " / 发错 " + std::to_string(_counters.sendError) +
                       " / 非法帧 " + std::to_string(_counters.invalidFrame) +
                       " / 未知指令 " + std::to_string(_counters.unknownCommand) +
-                      " / 慢消费者 " + std::to_string(_counters.slowConsumer));
+                      " / 慢消费者 " + std::to_string(_counters.slowConsumer) +
+                      " / 半包超时 " + std::to_string(_counters.halfFrameTimeout) +
+                      " / 空闲超时 " + std::to_string(_counters.idleTimeout) +
+                      " / 写超时 " + std::to_string(_counters.writeTimeout) +
+                      "；定时器：活 " + std::to_string(_timers.liveCount()) +
+                      "，堆 " + std::to_string(_timers.heapSize()));
 }
 
 void Shard::drainIncoming()
@@ -267,6 +293,10 @@ void Shard::drainIncoming()
 
         const std::size_t count = _connectionCount.fetch_add(1) + 1;
         _peakConnections = std::max(_peakConnections, count);
+
+        // 新连接从挂上空闲超时开始。半包/写暂时没东西可挂：
+        // 一个字节都还没收到、写缓冲也空着，这两种超时此刻没有判据。
+        refreshTimers(raw);
     }
 }
 
@@ -408,6 +438,7 @@ void Shard::readFrom(Connection *connection)
         }
     }
 
+    refreshTimers(connection);
     flush(connection);
 }
 
@@ -457,6 +488,11 @@ bool Shard::dispatchFrame(Connection *connection, const CommandFrame &frame)
     // 不会出现「响应先到、状态还没置」的窗口。
     connection->state = ConnectionState::InFlight;
     updateInterest(connection);
+
+    // 在飞期间三类超时全部摘掉：半包与空闲的判据是「连接在等人用」，
+    // 此刻是业务在算；写缓冲必然为空，写超时本就挂不上。
+    // 不摘的话，一个耗时 30 秒的业务请求会被 10 秒的半包超时掐死。
+    refreshTimers(connection);
 
     auto mailbox = _mailbox;
     const std::uint64_t connectionId = connection->id;
@@ -524,10 +560,14 @@ void Shard::flush(Connection *connection)
     {
         connection->state = ConnectionState::Writing;
         updateInterest(connection);
+        // 写超时从「确认发不出去」这一刻开始计时。挂在 append 那一刻也可以，
+        // 但那样一次成功的发送也会走一遍挂表/摘表，纯属白做。
+        refreshTimers(connection);
         return;
     }
 
     connection->clearSentData();
+    refreshTimers(connection); // 写缓冲已空：摘掉写超时
 
     // 写完了：Writing → Idle 并恢复读，同时消化摘读关注期间积压的帧。
     // InFlight（响应还没回来）时什么也不做，摘着的读关注继续摘着。
@@ -591,6 +631,107 @@ void Shard::resumeReading(Connection *connection)
     {
         consumeFrames(connection);
     }
+
+    // 回到 Idle 是一次「完整交互走完」，空闲超时要重新计时；
+    // codec 里若还压着残帧，半包超时也从此刻重新起算（上一段已经结束）。
+    refreshTimers(connection);
+}
+
+void Shard::refreshTimers(Connection *connection)
+{
+    if (!connection->isOpen())
+    {
+        _timers.disarmAll(connection->id);
+        return;
+    }
+
+    // 空闲：只有 Idle 才算「连接在等人用」。InFlight 是业务在算、Writing 是我方在发，
+    // 两种都不是连接的错——挂上空闲超时就会把一条正忙的连接掐掉。
+    if (connection->state == ConnectionState::Idle)
+    {
+        armRefreshingTimer(connection, TimeoutKind::Idle, _timeouts.idleMs);
+    }
+    else
+    {
+        _timers.disarm(connection->id, TimeoutKind::Idle);
+    }
+
+    // 半包：Idle 且 codec 里压着不完整的字节。用 armIfAbsent 而不是刷新，
+    // 原因见头文件：顺延的话，每秒发一个字节就能让连接永久占着一份缓冲。
+    if (connection->state == ConnectionState::Idle && connection->codec.pendingBytes() > 0)
+    {
+        _timers.armIfAbsent(connection->id, TimeoutKind::HalfFrame, _timeouts.halfFrameMs);
+    }
+    else
+    {
+        _timers.disarm(connection->id, TimeoutKind::HalfFrame);
+    }
+
+    // 写：有积压才算。InFlight 时写缓冲必然为空，所以不用单独判状态。
+    if (connection->hasPendingSend())
+    {
+        armRefreshingTimer(connection, TimeoutKind::Write, _timeouts.writeMs);
+    }
+    else
+    {
+        _timers.disarm(connection->id, TimeoutKind::Write);
+    }
+}
+
+void Shard::armRefreshingTimer(Connection *connection, TimeoutKind kind, int timeoutMs)
+{
+    if (timeoutMs <= 0)
+    {
+        _timers.disarm(connection->id, kind);
+        return;
+    }
+
+    // 剩余时间还过半就保持原样。每次事件都重挂会让堆条目疯长（每次 arm 一个新条目），
+    // 1000 条连接满负荷时能造到每秒百万级，压紧的开销反而超过定时器本身的价值。
+    const int remaining = _timers.remainingMs(connection->id, kind);
+    if (remaining >= 0 && remaining > timeoutMs / 2)
+    {
+        return;
+    }
+
+    _timers.arm(connection->id, kind, timeoutMs);
+}
+
+void Shard::handleTimeouts()
+{
+    if (_timers.collectExpired(_expired) == 0)
+    {
+        return;
+    }
+
+    for (const ExpiredTimer &timer : _expired)
+    {
+        Connection *connection = findConnection(timer.connectionId);
+
+        // 连接可能已经没了（上一轮关掉的、或者对端在这期间断开）。
+        // 定时器条目是「按标识」记录的，找不到就是找不到，不是错误。
+        if (connection == nullptr || !connection->isOpen())
+        {
+            continue;
+        }
+
+        switch (timer.kind)
+        {
+        case TimeoutKind::HalfFrame:
+            closeConnection(connection, CloseReason::HalfFrameTimeout);
+            break;
+        case TimeoutKind::Idle:
+            closeConnection(connection, CloseReason::IdleTimeout);
+            break;
+        case TimeoutKind::Write:
+            closeConnection(connection, CloseReason::WriteTimeout);
+            break;
+        }
+        // 同一条连接可能同时挂着两三个定时器（比如又半包又写不动），
+        // closeConnection 之后 isOpen() 为假，后面的条目会在下一次循环里被跳过。
+    }
+
+    _expired.clear();
 }
 
 void Shard::closeConnection(Connection *connection, CloseReason reason)
@@ -622,6 +763,15 @@ void Shard::closeConnection(Connection *connection, CloseReason reason)
     case CloseReason::SlowConsumer:
         ++_counters.slowConsumer;
         break;
+    case CloseReason::HalfFrameTimeout:
+        ++_counters.halfFrameTimeout;
+        break;
+    case CloseReason::IdleTimeout:
+        ++_counters.idleTimeout;
+        break;
+    case CloseReason::WriteTimeout:
+        ++_counters.writeTimeout;
+        break;
     case CloseReason::None:
         break;
     }
@@ -633,6 +783,10 @@ void Shard::closeConnection(Connection *connection, CloseReason reason)
                   name() + " 断开连接：" + closeReasonText(reason));
 
     _closing.push_back(connection->id);
+
+    // 先把这条连接的定时器全摘掉，再标记关闭。不摘的话堆里会留下一堆
+    // 永远不会被处理的陈旧条目，而且它们到期时还会白唤醒分片一次。
+    _timers.disarmAll(connection->id);
     connection->markClosing();
 }
 

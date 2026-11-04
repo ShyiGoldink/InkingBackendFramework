@@ -221,6 +221,7 @@ set(INKING_SOURCES
     src/network/SocketOps.cpp
     src/network/Poller.cpp
     src/network/Wakeup.cpp
+    src/network/TimerQueue.cpp
     src/network/NetworkConfig.cpp
     src/network/CommandRegistry.cpp
     src/network/ShardMailbox.cpp
@@ -292,6 +293,13 @@ if(INKING_BUILD_TEST_TOOLS)
         target_link_libraries(stepA2_echo_client PRIVATE ws2_32)
     endif()
     message(STATUS "已启用测试工具: stepA2_echo_client -> ${CMAKE_BINARY_DIR}/bin")
+
+    # 定时器堆的量尺（M8 指标：插入/取消耗时随规模只涨 log(n)）。
+    # 只依赖 TimerQueue.cpp，不链接主程序，所以能在几秒内编完。
+    add_executable(timer_bench tools/netbench/timer_bench.cpp src/network/TimerQueue.cpp)
+    target_include_directories(timer_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_features(timer_bench PRIVATE cxx_std_20)
+    message(STATUS "已启用测试工具: timer_bench -> ${CMAKE_BINARY_DIR}/bin")
 endif()
 
 # 构建完成后，首次复制默认配置到可执行文件同级目录

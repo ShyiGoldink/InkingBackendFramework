@@ -57,7 +57,7 @@ void Net::run()
 
     for (std::size_t index = 0; index < config.shardCount; ++index)
     {
-        auto shard = std::make_unique<Shard>(index, config.maxConnectionsPerShard);
+        auto shard = std::make_unique<Shard>(index, config.maxConnectionsPerShard, config.timeouts);
         if (!shard->start(errorMessage))
         {
             setStageStatus(NetworkStage::kShard, "启动分片", false,
@@ -241,7 +241,7 @@ bool Net::stepBind(const int &port)
     serverAddress.sin_port = htons(static_cast<unsigned short>(port));
 
     if (::bind(_acceptSocket, reinterpret_cast<sockaddr *>(&serverAddress),
-               sizeof(serverAddress)) == SOCKET_ERROR)
+               sizeof(serverAddress)) != 0)
     {
         errorMessage = "Bind[绑定]请求失败:" + SocketOps::lastErrorText();
         closeListenSocket();
@@ -263,7 +263,7 @@ bool Net::stepListen()
 
     // backlog 从 128 提到 1024：压测时会一次性涌进 1000 条连接，
     // backlog 太小会有一部分连不上（现象是「1000 条里只有几百条连上」）。
-    if (::listen(_acceptSocket, 1024) == SOCKET_ERROR)
+    if (::listen(_acceptSocket, 1024) != 0)
     {
         errorMessage = "Listen[监听]请求失败:" + SocketOps::lastErrorText();
         closeListenSocket();

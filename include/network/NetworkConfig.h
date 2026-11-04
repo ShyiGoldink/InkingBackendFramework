@@ -13,6 +13,25 @@
 #include <cstddef>
 #include <string>
 
+/**
+ * @brief 三类超时的时长（毫秒）。0 表示「这一类超时关闭」。
+ *
+ * 为什么要有 0 这个取值：三类超时的默认状态不应该一样。
+ * - 半包超时、写超时是「故障兜底」，不设就等于把资源永久借给一个坏客户端，默认开。
+ * - 空闲超时是「业务约定」，取决于客户端会不会主动保活。默认开等于替使用者做了
+ *   一个他可能不认的决定：任何长连接客户端都会在每个周期被掐一次。
+ *
+ * 所以空闲超时默认 **0（关闭）**，要开就在配置里写明确的值。
+ */
+struct NetworkTimeouts
+{
+    int halfFrameMs = 10000;
+    int idleMs = 0;
+    int writeMs = 30000;
+
+    std::string describe() const;
+};
+
 struct NetworkConfig
 {
     int port = 9000;
@@ -32,6 +51,9 @@ struct NetworkConfig
      * 再吃新连接，只会让它管的全部连接一起变慢，那是最糟的过载处理方式。
      */
     std::size_t maxConnectionsPerShard = 1000;
+
+    /** 三类超时（M8）。半包/写默认开，空闲默认关 */
+    NetworkTimeouts timeouts;
 
     /** 给日志和自检用的一行摘要 */
     std::string describe() const;

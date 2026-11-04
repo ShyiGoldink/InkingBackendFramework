@@ -2,6 +2,9 @@
     "networkConfig": {
         "port": 9000,
         "shardCount": 4,
-        "maxConnectionsPerShard": 1000
+        "maxConnectionsPerShard": 1000,
+        "halfFrameTimeoutMs": 10000,
+        "idleTimeoutMs": 0,
+        "writeTimeoutMs": 30000
     }
 }
