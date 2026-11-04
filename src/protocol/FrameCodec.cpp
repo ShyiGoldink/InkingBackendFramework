@@ -36,19 +36,33 @@ namespace
     FrameCodec::Status parseFrame(const char *data, std::size_t available,
                                   std::size_t &frameSize, CommandFrame &frame)
     {
+        // 魔数单独先判：2 个字节就够，不必等到凑满整个帧头。
+        // 非本协议的流量（端口扫描、旧版本客户端、连错端口）在这里被挡住，
+        // 这是魔数真正的价值所在——它不承担「流错位后找回边界」的职责。
+        if (available < ProtocolFrame::kMagicBytes)
+        {
+            return FrameCodec::Status::NeedMoreData;
+        }
+        if (readBigEndian(data, ProtocolFrame::kMagicBytes) != ProtocolFrame::kMagic)
+        {
+            return FrameCodec::Status::InvalidFrame;
+        }
+
         if (available < ProtocolFrame::kHeaderBytes)
         {
             return FrameCodec::Status::NeedMoreData;
         }
 
         const std::uint64_t packetBytes =
-            readBigEndian(data, ProtocolFrame::kPacketLengthBytes);
+            readBigEndian(data + ProtocolFrame::kMagicBytes,
+                          ProtocolFrame::kPacketLengthBytes);
         const std::uint64_t commandBytes =
-            readBigEndian(data + ProtocolFrame::kPacketLengthBytes,
+            readBigEndian(data + ProtocolFrame::kMagicBytes + ProtocolFrame::kPacketLengthBytes,
                           ProtocolFrame::kCommandLengthBytes);
 
         // 包长至少要装得下帧头，且不能超过上限；
-        // 指令长既不能超过上限，也不能超出包长允许的范围
+        // 指令长既不能超过上限，也不能超出包长允许的范围。
+        // 注意顺序：packetBytes 的下界判断必须写在减法之前，否则无符号运算会回绕。
         if (packetBytes < ProtocolFrame::kHeaderBytes ||
             packetBytes > ProtocolFrame::kMaxFrameBytes ||
             commandBytes > ProtocolFrame::kMaxCommandBytes ||
@@ -93,6 +107,7 @@ FrameCodec::Status FrameCodec::encode(const CommandFrame &frame, std::string &ou
     // 先写到临时对象，成功后再换给调用方，失败时 out 保持原样
     std::string encoded;
     encoded.reserve(frameSize);
+    writeBigEndian(encoded, ProtocolFrame::kMagic, ProtocolFrame::kMagicBytes);
     writeBigEndian(encoded, frameSize, ProtocolFrame::kPacketLengthBytes);
     writeBigEndian(encoded, commandSize, ProtocolFrame::kCommandLengthBytes);
     encoded.append(frame.command);
@@ -176,7 +191,8 @@ FrameCodec::Status FrameCodec::next(CommandFrame &frame)
         return Status::Ok;
 
     case Status::InvalidFrame:
-        // 帧头就不合法，在这种字节流里没法可靠地找回边界，丢弃缓冲重新开始
+        // 帧头不合法就丢弃缓冲，不尝试扫描魔数找回边界（理由见 ProtocolFrame.h）。
+        // 调用方应当把这条连接视为不可信并在连接层关闭它，而不是继续解析同一条流。
         reset();
         return Status::InvalidFrame;
 

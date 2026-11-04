@@ -64,6 +64,18 @@ struct LogOptions
  *
  * 5. **不写控制台**。控制台只承载交互；排障用 `log tail / grep / open`。
  *    无人值守场景可显式打开镜像：环境变量 `INKING_LOG_CONSOLE=error|warn|info`。
+ *
+ * 6. **与前端 `InkLog`（`InkingUIKit/include/detail/InkLog.h`）的关系：同一套设计取向，
+ *    不是逐字同构**。写在这里，是为了让"改哪一边"有判据：
+ *
+ *    - **一样**（改这两条要两边一起改，否则解析 / 报告工具会错位）：
+ *      纯文本唯一事实源（运行期不写 HTML）；每行 7 段自带定位且第 3 段固定 `模块:--`。
+ *    - **只有这边才有**：`init(LogOptions)` / `shutdown()` / 差分快照 `snapshot()` /
+ *      控制台镜像 `setMirrorSink` / 交互命令 `command()`；级别是 `Trace…Fatal` 六档。
+ *    - **只有前端才有**：级别集合多一档 `Pass`（GUI 的"成功流水"）、DEBUG 的**独立折叠槽**
+ *      （别的级别插进来不打断累计）、WARN/ERROR 不折叠、`CountOf` / `ResetStats` 观测口。
+ *    - 前端**默认不编译调试流**（CMake 选项 `INKING_DEBUG_LOG` 默认 `OFF`），
+ *      这边没有对应开关。
  */
 class ShineLog
 {

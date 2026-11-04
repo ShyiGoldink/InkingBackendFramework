@@ -43,6 +43,9 @@ bool PasswordTool::verifyConsole() const
         // 如果密码正确，那么直接返回true
         if (verify(password))
         {
+            // 提示行本身不带换行（输密码时回车不算"打印"），这里补一个：
+            // 否则密码通过后紧随其后的启动横幅会接在"请输入密码:"这一行后面。
+            std::cout << std::endl;
             return true;
         }
         std::cout << "\033[38;5;208m密码错误。\033[0m" << std::endl;

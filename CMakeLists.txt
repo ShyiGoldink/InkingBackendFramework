@@ -194,6 +194,9 @@ endif()
 set(INKING_SOURCES
     src/main.cpp
     src/core/Application.cpp
+    src/core/CommandLine.cpp
+    src/core/ConsoleEnvironment.cpp
+    src/core/ProcessSignal.cpp
     src/command/CommandCenter.cpp
     src/command/CommandExecutor.cpp
     src/command/CommandLibrary/CommandLibrary.cpp

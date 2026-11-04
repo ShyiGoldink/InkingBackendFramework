@@ -23,6 +23,8 @@ cmake/CMakeUserPaths.cmake
 # IDE files
 .vs/
 /.vscode/
+# WorkBuddy 会话/记忆目录（本地工作数据，不进版本库）
+/.workbuddy/
 .idea/
 *.sln
 *.vcxproj

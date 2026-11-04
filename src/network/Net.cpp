@@ -10,6 +10,7 @@
 #include <thread>
 #include <vector>
 #include <string>
+#include <functional>
 #include <unordered_map>
 #ifdef _WIN32
 #include <winsock2.h> // WSAPoll / pollfd 在这里
@@ -325,9 +326,16 @@ namespace
             return _poller.add(_listenSocket, nullptr, ConnPoller::kRead);
         }
 
-        void serve()
+        /**
+         * @brief 事件循环。
+         *
+         * @param shouldStop 每轮开头问一次"该退了吗"。用回调而不是成员标志，
+         *        是为了让 ConnShard 保持"只认识 socket"的纯粹：退出策略属于 Net。
+         *        每轮最多等 kWaitTimeoutMs（1 秒），所以退出延迟有上界。
+         */
+        void serve(const std::function<bool()> &shouldStop)
         {
-            while (true)
+            while (!shouldStop())
             {
                 // 两个平台带回的事件标识类型不同（Linux 是连接指针，Windows 是 socket），
                 // 用泛型 lambda 让编译器自己挑对应的 handleEvent 重载。
@@ -568,6 +576,10 @@ Net::~Net()
 
 void Net::run()
 {
+    // 每次进入事件循环都从"未请求退出"开始：run() 是可以被重复调用的，
+    // 上一次退出留下的标志不能让这一次刚起来就立刻结束。
+    _stopRequested.store(false);
+
     if (_acceptSocket != INVALID_SOCKET)
     {
         setStageStatus(
@@ -601,7 +613,15 @@ void Net::run()
         0.0f,
         "事件循环已启动，等待连接");
 
-    shard.serve();
+    shard.serve([this]()
+                { return _stopRequested.load(); });
+}
+
+void Net::stop()
+{
+    // 只置标志：真正关闭监听 socket 的是 run() 退出后的析构，
+    // 或者说是"事件循环不再 accept 之后"的那个时点。
+    _stopRequested.store(true);
 }
 
 void Net::startUp(const int &port)

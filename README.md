@@ -252,10 +252,64 @@ of this project itself are tiny and can go back to `--parallel`.
 
 The executable asks for a console password at startup (five attempts, hash checked in `src/tool/PasswordTool.cpp`)
 before it starts the rest of the framework, then drops into the command prompt where `help` lists the available
-commands. Running it from a script without an interactive terminal will not get past the password prompt.
+commands.
 
 Build options: `INKING_ENABLE_PROTOBUF` (default ON), `INKING_PROTOBUF_SOURCE` (default `auto`),
 `INKING_PROTOBUF_TAG` (default `v33.4`), `INKING_ENABLE_MYSQL` (default OFF), `CMAKE_BUILD_TYPE`.
+
+### 6.1 Startup modes
+
+```bash
+./InkingBackendFramework                 # interactive: password, console, exit ends the process
+./InkingBackendFramework --start         # service: stay alive until a signal arrives
+./InkingBackendFramework --help
+./InkingBackendFramework --version
+```
+
+| Mode | Password | Process ends when |
+| --- | --- | --- |
+| interactive (no arguments) | required | `exit`, Ctrl+D, or Ctrl+C |
+| `--start` | required **only if stdin is a terminal** | `SIGTERM` / `SIGINT` / `SIGHUP`, or `exit` |
+
+What `--start` changes, and why each part exists:
+
+- **stdin closing does not end the process.** Under systemd, in a container, or with `</dev/null`, stdin reaches
+  EOF immediately. The console loop switches to a resident wait instead of letting the process return.
+- **the network service starts** (port 9000), because "run as a process" means it has something to serve.
+- **termination is a signal, not an input.** `SIGTERM`/`SIGINT`/`SIGHUP` set a flag that the console and network
+  threads poll; the network event loop leaves within one poll timeout (1 s), the final state snapshot is written,
+  then the process exits. A default signal action would kill the process before that snapshot is written — which
+  is exactly the evidence needed to explain why a service stopped.
+- **the password is skipped when nobody could type it.** With `</dev/null` the check cannot succeed, so it is
+  skipped and a `WARN` line lands in the log (`Application:02`). The security boundary moved, so it leaves
+  evidence. With a terminal attached, the password is still required.
+- **Ctrl+C does not stop a console-attached service.** replxx runs the terminal in raw mode, so Ctrl+C aborts the
+  current input line. Use `exit` or send `SIGTERM` from another shell.
+
+Exit codes: `0` normal, `1` password rejected, `2` bad arguments, `3` the network thread did not stop within 5 s
+(the process forces itself down rather than hanging on the thread pool join).
+
+A minimal systemd unit:
+
+```ini
+[Unit]
+Description=Inking backend
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/inking
+ExecStart=/opt/inking/InkingBackendFramework --start
+Restart=on-failure
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`LOG/` and `config/` are resolved relative to the **executable**, not the working directory, so `WorkingDirectory`
+is not load-bearing for them; the startup banner prints the absolute log path anyway.
+
 
 ## 7. Protocol: frame format and messages
 
