@@ -28,6 +28,15 @@ namespace
     constexpr std::size_t kReceiveChunk = 4096;
 
     /**
+     * @brief 停机时「读掉再关」的字节上限。
+     *
+     * 64 KiB 足够覆盖绝大多数「客户端刚发出一个请求」的场景（请求通常几 KB），
+     * 又不至于让一个正在灌大文件的连接把停机拖住。超出的部分留在内核里，
+     * 那种情况下 close 仍然会发 RST——这是可接受的：对端本来就在做与服务无关的事。
+     */
+    constexpr std::size_t kShutdownDiscardLimit = 64 * 1024;
+
+    /**
      * @brief 单条连接允许积压的待发送字节上限（慢消费者防护的兜底）。
      *
      * C2 之后它基本**不会被触发**，原因值得写清楚：一条在飞意味着上一条响应没发完
@@ -65,6 +74,8 @@ namespace
             return "空闲超时（长时间没有完整交互）";
         case CloseReason::WriteTimeout:
             return "写超时（写缓冲长时间没发完）";
+        case CloseReason::ServerShutdown:
+            return "服务停止";
         case CloseReason::None:
             break;
         }
@@ -166,6 +177,20 @@ void Shard::requestStop()
     }
 }
 
+void Shard::requestDrain(int graceMs)
+{
+    // 顺序：先写截止时刻，再置标志。反过来会让分片读到「已排空但截止时刻是 0」，
+    // 一进排空就判定超时（见头文件里关于发布顺序的说明）。
+    _drainStartedMs = TimerQueue::nowMs();
+    _drainDeadlineMs = _drainStartedMs + std::max(graceMs, 0);
+    _draining.store(true, std::memory_order_release);
+
+    if (_wakeup)
+    {
+        _wakeup->notify();
+    }
+}
+
 void Shard::join()
 {
     if (_thread.joinable())
@@ -189,10 +214,29 @@ void Shard::serve()
             break;
         }
 
-        // ③ 等事件。醒来有四种可能：有连接可读写、唤醒器被写、有定时器到期、安全网上限。
+        // ③ 排空检查。放在 wait() 之前：上一次醒来已经处理完回投与写事件，
+        //    此刻如果连接表空了就应该立刻退出，不该再白睡一轮。
+        if (_draining.load(std::memory_order_acquire) && drainStep())
+        {
+            break;
+        }
+
+        // ④ 等事件。醒来有四种可能：有连接可读写、唤醒器被写、有定时器到期、安全网上限。
         //    睡多久不是常量，而是「最近一个定时器到期时刻」——这是 C5 的核心：
         //    分片因此既不会永久阻塞，也不会为了查定时器而空转。
-        const int waitMs = _timers.nearestTimeoutMs(kWakeTimeoutMs);
+        int waitMs = _timers.nearestTimeoutMs(kWakeTimeoutMs);
+
+        // 排空期间还要再压一层：不能睡过排空截止时刻。否则「上限 5 秒」实际会变成
+        // 5 秒 + 最多 1 秒（正好睡在截止时刻之后才醒），超时报告的时间就不准了。
+        if (_draining.load(std::memory_order_acquire))
+        {
+            const std::int64_t remaining = _drainDeadlineMs - TimerQueue::nowMs();
+            if (remaining < waitMs)
+            {
+                waitMs = remaining > 0 ? static_cast<int>(remaining) : 0;
+            }
+        }
+
         const int readyCount = _poller->wait(_ready, waitMs);
         if (readyCount < 0)
         {
@@ -201,20 +245,20 @@ void Shard::serve()
             break;
         }
 
-        // ④ 逐个处理。回调里可能关闭连接，但只是「标记」，真正的销毁在 ⑥
+        // ⑤ 逐个处理。回调里可能关闭连接，但只是「标记」，真正的销毁在 ⑦
         for (const PollerEvent &event : _ready)
         {
             handleEvent(event);
         }
 
-        // ⑤ 到期定时器。必须紧挨着 ⑥，**不能挪到 wait() 之前**：
+        // ⑥ 到期定时器。必须紧挨着 ⑦，**不能挪到 wait() 之前**：
         //    wait 正是被「最近的到期时刻」叫醒的，醒来就地处理才是准点；
         //    放在 wait 之前的话，到期会被推迟一整个等待周期（实测晚了整整 1 秒，
         //    因为关闭标记留到下一轮清理才生效）。
-        //    这里只标记关闭，真正的 remove + close 在 ⑥。
+        //    这里只标记关闭，真正的 remove + close 在 ⑦。
         handleTimeouts();
 
-        // ⑥ 清理阶段。遍历中途删连接就是经典的 use-after-free
+        // ⑦ 清理阶段。遍历中途删连接就是经典的 use-after-free
         removeClosedConnections();
     }
 
@@ -238,8 +282,13 @@ void Shard::serve()
                       " / 半包超时 " + std::to_string(_counters.halfFrameTimeout) +
                       " / 空闲超时 " + std::to_string(_counters.idleTimeout) +
                       " / 写超时 " + std::to_string(_counters.writeTimeout) +
+                      " / 服务停止 " + std::to_string(_counters.serverShutdown) +
                       "；定时器：活 " + std::to_string(_timers.liveCount()) +
-                      "，堆 " + std::to_string(_timers.heapSize()));
+                      "，堆 " + std::to_string(_timers.heapSize()) +
+                      "；排空：" + (_drainTimedOut ? "超时（剩 " + std::to_string(_drainSurvivors) +
+                                                     " 条 / " + std::to_string(_drainSurvivorBytes) + " 字节）"
+                                                   : "完成") +
+                      "，用时 " + std::to_string(_drainElapsedMs) + "ms");
 }
 
 void Shard::drainIncoming()
@@ -258,6 +307,14 @@ void Shard::drainIncoming()
     for (const SocketType socket : incoming)
     {
         if (_stopRequested.load())
+        {
+            SocketOps::close(socket);
+            continue;
+        }
+
+        // 排空期间不再接新连接。接入线程此时已经停了，正常不会有新的进来；
+        // 这一条挡的是「交接队列里还压着几条」的那个窗口。
+        if (_draining.load(std::memory_order_acquire))
         {
             SocketOps::close(socket);
             continue;
@@ -380,7 +437,11 @@ void Shard::handleEvent(const PollerEvent &event)
     {
         // 在飞期间不读：宁可晚一轮，也不能让同一条连接出现两条在飞。
         // 摘掉读关注之后仍可能因为 EPOLLRDHUP 被报告可读，所以这个判断必须有。
-        if (connection->state == ConnectionState::Idle)
+        //
+        // 排空期间同样不读：这时候读进来的请求没人保证能处理完（分片马上就要停了），
+        // 受理了却回不了包，比直接不收更糟。
+        if (connection->state == ConnectionState::Idle &&
+            !_draining.load(std::memory_order_acquire))
         {
             readFrom(connection);
         }
@@ -621,6 +682,17 @@ void Shard::resumeReading(Connection *connection)
         return;
     }
 
+    // 排空期间不再恢复读：这条连接已经「处理完手上的事」了，正好在帧边界处断开。
+    // 在这里断是干净的——响应已经发完，对端收到的是完整帧 + FIN，不会读到半个包。
+    if (_draining.load(std::memory_order_acquire))
+    {
+        // 响应已经发完（此刻写缓冲为空），先把对端可能已经发来的下一条请求读掉，
+        // 再干净关断。不读的话 close 会发 RST，客户端会丢掉刚收到的那条完整响应。
+        discardIncoming(connection, kShutdownDiscardLimit);
+        closeConnection(connection, CloseReason::ServerShutdown);
+        return;
+    }
+
     connection->state = ConnectionState::Idle;
     updateInterest(connection);
 
@@ -734,6 +806,115 @@ void Shard::handleTimeouts()
     _expired.clear();
 }
 
+void Shard::discardIncoming(Connection *connection, std::size_t limitBytes)
+{
+    if (!connection->isOpen())
+    {
+        return;
+    }
+
+    char buffer[kReceiveChunk];
+    std::size_t discarded = 0;
+    while (discarded < limitBytes)
+    {
+        const int received = ::recv(connection->socket, buffer,
+                                    static_cast<int>(sizeof(buffer)), 0);
+        if (received <= 0)
+        {
+            // 0 = 对端已经关了；<0 = EAGAIN（没更多了）或真错误。
+            // 三种情况都该停止读，区别只在要不要记日志——停机路径上不值得区分。
+            break;
+        }
+        discarded += static_cast<std::size_t>(received);
+    }
+}
+
+bool Shard::drainStep()
+{
+    const std::int64_t now = TimerQueue::nowMs();
+
+    if (!_drainPrepared)
+    {
+        _drainPrepared = true;
+
+        std::size_t keep = 0;
+        std::size_t keepBytes = 0;
+
+        // 先关「没事可做」的：Idle 且没有待发字节。它们此刻没有任何未完成的交互，
+        // 留着只会让调用方白等一个排空周期。
+        for (const auto &entry : _connections)
+        {
+            Connection *connection = entry.second.get();
+            if (!connection->isOpen())
+            {
+                continue;
+            }
+            if (connection->state == ConnectionState::Idle && !connection->hasPendingSend())
+            {
+                // 先读掉接收缓冲再关，否则内核会发 RST（见 discardIncoming 的说明）
+                discardIncoming(connection, kShutdownDiscardLimit);
+                closeConnection(connection, CloseReason::ServerShutdown);
+                continue;
+            }
+            ++keep;
+            keepBytes += connection->pendingSendBytes();
+        }
+        removeClosedConnections();
+
+        ShineLog::log(LogLevel::Info, kNetModuleName, NetworkStage::kShard,
+                      name() + " 开始排空：已断开空闲连接，保留 " + std::to_string(keep) +
+                          " 条（" + std::to_string(keepBytes) + " 字节待发），上限 " +
+                          std::to_string(_drainDeadlineMs - _drainStartedMs) + "ms");
+    }
+
+    if (_connections.empty())
+    {
+        _drainElapsedMs = now - _drainStartedMs;
+        ShineLog::log(LogLevel::Info, kNetModuleName, NetworkStage::kShard,
+                      name() + " 排空完成，用时 " + std::to_string(_drainElapsedMs) + "ms");
+        return true;
+    }
+
+    if (now >= _drainDeadlineMs)
+    {
+        _drainTimedOut = true;
+        _drainElapsedMs = now - _drainStartedMs;
+        _drainSurvivors = _connections.size();
+        _drainSurvivorBytes = 0;
+        for (const auto &entry : _connections)
+        {
+            _drainSurvivorBytes += entry.second->pendingSendBytes();
+        }
+
+        // Warn 而不是 Info：这说明「有人在停机时还占着连接不放」，
+        // 要么是慢消费者，要么是排空上限配小了——两种情况都值得事后查。
+        ShineLog::log(LogLevel::Warn, kNetModuleName, NetworkStage::kShard,
+                      name() + " 排空超时（" + std::to_string(_drainElapsedMs) + "ms）：仍有 " +
+                          std::to_string(_drainSurvivors) + " 条连接、" +
+                          std::to_string(_drainSurvivorBytes) + " 字节待发，强制关闭");
+        return true;
+    }
+
+    return false;
+}
+
+Shard::Statistics Shard::statistics() const
+{
+    Statistics stats;
+    stats.peakConnections = _peakConnections;
+    stats.frames = _counters.frames;
+    stats.dispatched = _counters.dispatched;
+    stats.replies = _counters.replies;
+    stats.handlerFailed = _counters.handlerFailed;
+    stats.droppedReplies = _counters.droppedReplies;
+    stats.peerClosed = _counters.peerClosed;
+    stats.shutdownCloses = _counters.serverShutdown;
+    stats.timeouts = _counters.halfFrameTimeout + _counters.idleTimeout + _counters.writeTimeout;
+    stats.errors = _counters.receiveError + _counters.sendError +
+                   _counters.invalidFrame + _counters.unknownCommand;
+    return stats;
+}
+
 void Shard::closeConnection(Connection *connection, CloseReason reason)
 {
     if (!connection->isOpen())
@@ -772,13 +953,20 @@ void Shard::closeConnection(Connection *connection, CloseReason reason)
     case CloseReason::WriteTimeout:
         ++_counters.writeTimeout;
         break;
+    case CloseReason::ServerShutdown:
+        ++_counters.serverShutdown;
+        break;
     case CloseReason::None:
         break;
     }
 
     // 对端正常关闭是预期事件，写 Trace（默认阈值下不落盘，需要时调 `log level trace` 就能看到）；
     // 其余几类都是「值得留证据」的，写 Warn。同一条消息会被日志系统折叠成一行 + ×N。
-    const LogLevel level = (reason == CloseReason::PeerClosed) ? LogLevel::Trace : LogLevel::Warn;
+    // 「服务停止」与「对端关闭」同理：它是我们自己做的决定，不该在停机时刷出一屏告警。
+    const LogLevel level = (reason == CloseReason::PeerClosed ||
+                            reason == CloseReason::ServerShutdown)
+                               ? LogLevel::Trace
+                               : LogLevel::Warn;
     ShineLog::log(level, kNetModuleName, NetworkStage::kShard,
                   name() + " 断开连接：" + closeReasonText(reason));
 
@@ -820,6 +1008,10 @@ void Shard::closeAllConnections()
 {
     for (const auto &entry : _connections)
     {
+        // 走到这里的连接是「停机时还没收干净」的那批（排空超时，或者硬停）。
+        // 它们同样是「因为服务停止而被断开」，不计数的话最终统计里
+        // 「停机断开」会少掉这一批，看起来像凭空消失。
+        ++_counters.serverShutdown;
         _poller->remove(entry.second->socket);
         SocketOps::close(entry.second->socket);
     }

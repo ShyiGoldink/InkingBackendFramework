@@ -2,6 +2,10 @@
 
 #include <system_error>
 
+#if defined(__linux__)
+#include <dirent.h>
+#endif
+
 namespace SocketOps
 {
     bool startUp(std::string &errorMessage)
@@ -123,6 +127,36 @@ namespace SocketOps
         ::shutdown(socket, SD_SEND);
 #else
         ::shutdown(socket, SHUT_WR);
+#endif
+    }
+
+    std::size_t openHandleCount()
+    {
+#ifdef _WIN32
+        DWORD count = 0;
+        if (!::GetProcessHandleCount(::GetCurrentProcess(), &count))
+        {
+            return 0;
+        }
+        return static_cast<std::size_t>(count);
+#elif defined(__linux__)
+        // Linux：数 /proc/self/fd 下的条目。opendir 自己也会占一个 fd，
+        // 所以减 1 才是「调用前」的真实值。
+        DIR *dir = ::opendir("/proc/self/fd");
+        if (dir == nullptr)
+        {
+            return 0;
+        }
+        std::size_t count = 0;
+        while (::readdir(dir) != nullptr)
+        {
+            ++count;
+        }
+        ::closedir(dir);
+        // "." 与 ".." 各占一个
+        return count > 2 ? count - 3 : 0;
+#else
+        return 0; // 其它平台不支持：返回 0 表示「没量到」，不是「零个」
 #endif
     }
 }

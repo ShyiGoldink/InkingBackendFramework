@@ -31,10 +31,18 @@ namespace NetworkStage
     constexpr int kBind = 3;               /** 绑定端口 */
     constexpr int kListen = 4;             /** 开始监听 */
     constexpr int kStartUp = 5;            /** 启动流水线汇总 */
-    constexpr int kShard = 6;              /** 分片启动与退出 */
+    constexpr int kShard = 6;              /** 分片启动 */
     constexpr int kAcceptor = 7;           /** 接入线程启动 */
     constexpr int kShutdown = 8;           /** 网络服务停止（汇总） */
     constexpr int kStopAcceptor = 9;       /** 接入线程停止 */
+
+    /*
+     * C6 的停机三段。停机是「卡住 / 泄漏 / 丢请求」的高发区，所以每一步都要能在
+     * `status` 里单独看见：看出来是「卡在排空」还是「卡在分片退出」，处理方式完全不同。
+     */
+    constexpr int kDrain = 10;     /** 等待在飞请求归零 + 排空写缓冲 */
+    constexpr int kStopShard = 11; /** 分片停止 */
+    constexpr int kReport = 12;    /** 最终统计上报 */
 }
 
 #endif // INKING_BACKEND_FRAMEWORK_NETWORK_STAGE_H

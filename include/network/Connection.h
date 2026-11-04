@@ -67,6 +67,13 @@ enum class CloseReason
     HalfFrameTimeout, /** 半包超时：收到一部分帧之后再没动静 */
     IdleTimeout,      /** 空闲超时：整条连接长时间没有完整交互 */
     WriteTimeout,     /** 写超时：写缓冲长时间没发完 */
+
+    /**
+     * 服务端主动停机（C6）。它和前两种的语义正好相反：不是「这条连接有问题」，
+     * 而是「我们不等了」。所以它在日志里不是告警，连接也可能是在一次完整交互
+     * 结束之后被干净关掉的。
+     */
+    ServerShutdown,
 };
 
 struct Connection

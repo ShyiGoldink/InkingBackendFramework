@@ -98,6 +98,18 @@ namespace SocketOps
 
     /** 半关闭写方向：告诉对端「我不再发了」，用于优雅关闭 */
     void shutdownWrite(SocketType socket);
+
+    /**
+     * @brief 本进程当前打开的句柄数（POSIX 是文件描述符数）。
+     *
+     * 放在这里而不是另起一个「进程工具」，是因为它唯一的用途就是回答网络层的问题：
+     * 「停机之后 fd 归零了吗」。M9 的验收里这一条是硬指标——连接泄漏在日志里
+     * 看不出来，fd 数才是证据。
+     *
+     * Linux 读 `/proc/self/fd`；Windows 用 `GetProcessHandleCount`（含文件、事件等
+     * 全部句柄，所以绝对值比 fd 多，看趋势即可）。其它平台返回 0，表示「不支持」。
+     */
+    std::size_t openHandleCount();
 }
 
 #endif // INKING_BACKEND_FRAMEWORK_SOCKET_OPS_H

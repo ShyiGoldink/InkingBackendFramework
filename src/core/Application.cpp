@@ -36,10 +36,15 @@ namespace
     /**
      * 网络线程退出的等待上限。
      *
-     * 秒级而不是立即：网络事件循环的 poll 超时是 1 秒，给它两三个周期足够把
-     * 手上的连接收干净。超过这个时间说明循环卡在别处，再等下去等于进程停不下来。
+     * 这是**安全网**，不是正常耗时：真正的耗时上限由网络层自己控制
+     * （`config/networkConfig.json` 的 `shutdownGraceMs`，默认 5 秒）。
+     * 正常停机是「停止接入 → 排空在飞 → 停分片」，全都在那个上限之内完成。
+     *
+     * 所以这里必须明显大于 `shutdownGraceMs`：早先它是 5 秒，与排空上限相同，
+     * 一旦有客户端在停机时赖着不走，排空还没到时限、这边就已经判定「卡死」并硬退
+     * （退出码 3），把「优雅停机」变成了「随机硬杀」。
      */
-    constexpr std::chrono::seconds kNetworkShutdownTimeout{5};
+    constexpr std::chrono::seconds kNetworkShutdownTimeout{15};
 
     /**
      * 免密码控制台启动网络服务的开关（给自动化/无人值守用）。

@@ -42,7 +42,8 @@ std::string NetworkConfig::describe() const
     return "端口 " + std::to_string(port) +
            "，分片 " + std::to_string(shardCount) +
            "，每分片连接上限 " + std::to_string(maxConnectionsPerShard) +
-           "，超时（" + timeouts.describe() + "）";
+           "，超时（" + timeouts.describe() + "）" +
+           "，停机排空上限 " + std::to_string(shutdownGraceMs) + "ms";
 }
 
 NetworkConfig loadNetworkConfig(std::string &note)
@@ -72,6 +73,7 @@ NetworkConfig loadNetworkConfig(std::string &note)
     const auto halfFrameTimeout = jsonTool.getValue<int>(*node, "halfFrameTimeoutMs");
     const auto idleTimeout = jsonTool.getValue<int>(*node, "idleTimeoutMs");
     const auto writeTimeout = jsonTool.getValue<int>(*node, "writeTimeoutMs");
+    const auto shutdownGrace = jsonTool.getValue<int>(*node, "shutdownGraceMs");
 
     if (port.has_value())
     {
@@ -104,6 +106,11 @@ NetworkConfig loadNetworkConfig(std::string &note)
     if (writeTimeout.has_value())
     {
         config.timeouts.writeMs = clampTimeout(*writeTimeout);
+    }
+    if (shutdownGrace.has_value())
+    {
+        // 排空上限用同一套边界：0 表示「不等，直接硬关」
+        config.shutdownGraceMs = clampTimeout(*shutdownGrace);
     }
 
     note = "已从 " + filePath + " 读取：" + config.describe();

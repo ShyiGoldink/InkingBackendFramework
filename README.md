@@ -322,7 +322,8 @@ is not load-bearing for them; the startup banner prints the absolute log path an
         "maxConnectionsPerShard": 1000,
         "halfFrameTimeoutMs": 10000,
         "idleTimeoutMs": 0,
-        "writeTimeoutMs": 30000
+        "writeTimeoutMs": 30000,
+        "shutdownGraceMs": 5000
     }
 }
 ```
@@ -335,6 +336,7 @@ is not load-bearing for them; the startup banner prints the absolute log path an
 | `halfFrameTimeoutMs` | a connection that sent only part of a frame is closed after this long. The deadline is absolute from the first partial byte, so a client cannot keep itself alive by dripping one byte at a time | falls back to 10000, clamped to 0..3600000 |
 | `idleTimeoutMs` | close a connection with no complete interaction for this long. **0 means disabled**, which is the default: the protocol has no heartbeat, so enabling it will cut any client that stays connected without sending | falls back to 0 (disabled) |
 | `writeTimeoutMs` | close a connection whose send buffer has not drained for this long (the peer reads too slowly or not at all) | falls back to 30000, clamped to 0..3600000 |
+| `shutdownGraceMs` | on shutdown, how long to wait for in-flight replies and pending writes before closing hard. It also bounds how long process exit can take | falls back to 5000, clamped to 0..3600000 |
 
 A missing or malformed file is **not** fatal: the network service still starts, using defaults, and the first
 `Net:05` log line records both what was read and where it came from.
@@ -357,6 +359,12 @@ a fixed 1000 ms. Timeout closes are counted separately (`半包超时 / 空闲�
 exit summary. Note the platform difference: the write timeout cannot be triggered on Windows loopback, because the
 kernel buffers the whole response (up to the 16 MiB frame limit) and `send` never reports "would block"; it is
 covered by tests on Linux only.
+
+Since C6 (§6.6) shutdown is staged and each stage is visible in `status`: stop accepting, drain in-flight work
+(bounded by `shutdownGraceMs`), join the shards, close the listening socket, then report one final summary line
+(accepted / frames / dispatched / replies / timeouts / errors / shutdown closes / remaining handles). Connections
+that were idle at shutdown get a clean FIN; connections still waiting on a reply are kept until the reply is written.
+`network-stop` stops the service without exiting the process (`network-run` starts it again).
 Acceptance moved to `tools/netbench/framed_client.py` (echo, half packet, sticky packet, big frame, ordering,
 ping, unknown command, three invalid-frame cases, slow consumer, 1000 idle connections). `hold_conns.py` and
 `edge_cases.py` send raw bytes and therefore only apply to the pre-C1 server; their headers say so.

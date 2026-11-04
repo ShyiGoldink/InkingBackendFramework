@@ -7,6 +7,7 @@
 #include "network/Shard.h"
 #include "ui/UIMessageLibrary.h"
 
+#include <chrono>
 #include <memory>
 #include <vector>
 
@@ -115,23 +116,90 @@ void Net::run()
                             { return _stopRequested.load(); });
     }
 
-    // ④ 停机顺序不能变：先断接入（不再有新连接进来），再停分片（它们只处理存量），
+    // ④ 停机顺序不能变：先断接入（不再有新连接进来），再排空分片（存量请求要收干净），
     //    最后关监听。反过来做的话，accept 可能刚刚接过一条连接、又往已停的分片里塞。
     listener.requestStop();
     listener.join();
     setStageStatus(NetworkStage::kStopAcceptor, "停止接入线程", true,
                    "累计接受连接 " + std::to_string(listener.acceptedCount()));
 
+    // ⑤ 排空：不再读新请求，等在飞的回包与写缓冲收干净（有上限，见 shutdownGraceMs）。
+    //    这一步把「硬关」变成「把手上这条处理完再走」——停机时客户端收到的响应
+    //    要么是完整帧，要么是帧边界处的干净 FIN，不会出现半个包。
+    const auto drainStart = std::chrono::steady_clock::now();
     for (const auto &shard : shards)
     {
-        shard->requestStop();
+        shard->requestDrain(config.shutdownGraceMs);
     }
     for (const auto &shard : shards)
     {
         shard->join();
     }
+    const auto drainElapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    std::chrono::steady_clock::now() - drainStart)
+                                    .count();
+
+    std::size_t drainedShards = 0;
+    std::size_t survivors = 0;
+    std::size_t survivorBytes = 0;
+    for (const auto &shard : shards)
+    {
+        if (shard->drainTimedOut())
+        {
+            ++drainedShards;
+            survivors += shard->drainSurvivors();
+            survivorBytes += shard->drainSurvivorBytes();
+        }
+    }
+
+    // 排空超时不算「停不下来」——连接已经被强制关掉、分片也已经退出，
+    // 但它是「有客户端在停机时还占着连接」的证据，所以阶段状态记成失败，值得看一眼。
+    setStageStatus(NetworkStage::kDrain, "等待在飞请求归零", drainedShards == 0,
+                   drainedShards == 0
+                       ? "全部连接已收干净，用时 " + std::to_string(drainElapsedMs) + "ms"
+                       : std::to_string(drainedShards) + " 个分片排空超时（剩 " +
+                             std::to_string(survivors) + " 条 / " +
+                             std::to_string(survivorBytes) + " 字节待发），已强制关闭，用时 " +
+                             std::to_string(drainElapsedMs) + "ms");
+
+    setStageStatus(NetworkStage::kStopShard, "停止分片", true,
+                   std::to_string(shards.size()) + " 个分片线程均已退出");
 
     closeListenSocket();
+
+    // ⑥ 最终统计。数字只在这里算一次：分片线程都已 join，读它们的计数器不存在竞争。
+    Shard::Statistics total;
+    for (const auto &shard : shards)
+    {
+        const Shard::Statistics stats = shard->statistics();
+        total.peakConnections += stats.peakConnections;
+        total.frames += stats.frames;
+        total.dispatched += stats.dispatched;
+        total.replies += stats.replies;
+        total.handlerFailed += stats.handlerFailed;
+        total.droppedReplies += stats.droppedReplies;
+        total.timeouts += stats.timeouts;
+        total.errors += stats.errors;
+        total.peerClosed += stats.peerClosed;
+        total.shutdownCloses += stats.shutdownCloses;
+    }
+
+    const std::size_t handles = SocketOps::openHandleCount();
+    const std::string summary =
+        "累计接受 " + std::to_string(listener.acceptedCount()) +
+        "，拆帧 " + std::to_string(total.frames) +
+        "，派发 " + std::to_string(total.dispatched) +
+        "，回投 " + std::to_string(total.replies) +
+        "，丢弃响应 " + std::to_string(total.droppedReplies) +
+        "，超时回收 " + std::to_string(total.timeouts) +
+        "，异常断开 " + std::to_string(total.errors) +
+        "，对端关闭 " + std::to_string(total.peerClosed) +
+        "，停机断开 " + std::to_string(total.shutdownCloses) +
+        "；进程句柄剩余 " + std::to_string(handles);
+
+    setStageStatus(NetworkStage::kReport, "上报最终统计", true, summary);
+    ShineLog::log(LogLevel::Info, kNetModuleName, NetworkStage::kReport,
+                  "网络服务最终统计：" + summary);
 
     setStageStatus(NetworkStage::kShutdown, "停止网络服务", true,
                    std::to_string(shards.size()) + " 个分片与接入线程均已退出");

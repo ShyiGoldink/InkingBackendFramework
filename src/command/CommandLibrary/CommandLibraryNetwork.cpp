@@ -43,5 +43,41 @@ std::vector<Command> CommandLibrary::netCommands() const
              return CommandResult::Continue;
          },
          false},
+        {"network-stop",
+         {"n-stop"},
+         "停止网络程序",
+         [](const std::vector<std::string> &)
+         {
+             const auto modules = ShineStatusChecker::getModules(kNetModuleName);
+             for (auto *module : modules)
+             {
+                 if (module == nullptr)
+                 {
+                     continue;
+                 }
+
+                 auto *net = dynamic_cast<Net *>(module);
+                 if (net == nullptr)
+                 {
+                     continue;
+                 }
+
+                 // 只置标志、不在这里等：真正的停机流程（停接入 → 排空 → 停分片）
+                 // 必须跑在网络线程上，控制台线程不能替它做。等完再返回会让控制台
+                 // 在那几秒里完全没反应，用户会以为卡死了。
+                 net->stop();
+                 UIMessageLibrary::addMessage(
+                     MessageType::normal, 0.0f,
+                     "已请求停止网络服务：先停接入，再排空在飞请求，随后关闭监听。\n");
+                 return CommandResult::Continue;
+             }
+
+             UIMessageLibrary::addMessage(
+                 MessageType::error,
+                 0.0f,
+                 "没有找到已注册的 Net 模块，无法停止网络程序。\n");
+             return CommandResult::Continue;
+         },
+         false},
     };
 }

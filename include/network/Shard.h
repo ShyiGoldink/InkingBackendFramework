@@ -84,6 +84,67 @@ public:
     /** 请求退出。任意线程可调，退出延迟由唤醒器保证是「立刻」而不是「等超时」 */
     void requestStop();
 
+    /**
+     * @brief 请求「优雅停止」（C6）：不再读新请求，等在飞的回包与写缓冲收干净。
+     *
+     * 与 `requestStop()` 的区别是**要不要给在飞请求一个交代**：
+     * - `requestStop()` 是硬停：立刻退出，写缓冲里没发完的字节直接丢，最省时间；
+     * - `requestDrain()` 是排空：已进来的请求一定拿到完整响应（或者连接在帧边界处
+     *   被干净断开），代价是停机最多慢 `graceMs`。
+     *
+     * 三者顺序不能变：先停止接入 → 再 `requestDrain` → 再 `join`。
+     *
+     * @param graceMs 排空上限。0 表示不等（等价于硬停）。上限是必须的：一个只发不读的
+     *        对端可以让写缓冲永远排不空，没有上限就该停不下来了。
+     */
+    void requestDrain(int graceMs);
+
+    /** 排空是否因为到时限而放弃（只有 join 之后读才有意义） */
+    bool drainTimedOut() const
+    {
+        return _drainTimedOut;
+    }
+
+    /** 到时限时还剩多少条连接 / 多少字节待发（同上，join 之后读） */
+    std::size_t drainSurvivors() const
+    {
+        return _drainSurvivors;
+    }
+
+    std::size_t drainSurvivorBytes() const
+    {
+        return _drainSurvivorBytes;
+    }
+
+    /** 排空实际耗时（毫秒）。0 表示没有真正排空过 */
+    long long drainElapsedMs() const
+    {
+        return _drainElapsedMs;
+    }
+
+    /**
+     * @brief 累计统计（M9 的「最终统计上报」）。
+     *
+     * 只能在 `join()` 之后调用：里面的字段都是分片线程独占写的，
+     * 线程还在跑的时候读就是数据竞争。这不是「顺便省个锁」，
+     * 而是刻意的：这些数只用于停机报告。
+     */
+    struct Statistics
+    {
+        std::size_t peakConnections = 0;
+        std::size_t frames = 0;
+        std::size_t dispatched = 0;
+        std::size_t replies = 0;
+        std::size_t handlerFailed = 0;
+        std::size_t droppedReplies = 0;
+        std::size_t timeouts = 0;      /** 三类超时之和 */
+        std::size_t errors = 0;        /** 收错 + 发错 + 非法帧 + 未知指令 */
+        std::size_t peerClosed = 0;    /** 对端正常关闭 */
+        std::size_t shutdownCloses = 0;/** 停机时主动断开 */
+    };
+
+    Statistics statistics() const;
+
     /** 等线程退出。可以重复调用 */
     void join();
 
@@ -164,6 +225,29 @@ private:
     /** 处理已到期的定时器：只标记关闭，真正销毁留给清理阶段 */
     void handleTimeouts();
 
+    /**
+     * @brief 排空阶段的一步：先关掉「没事可做」的连接，再判断是否收干净。
+     *
+     * @return true 表示可以退出循环了（全部收干净，或者到了排空上限）。
+     *
+     * 只关 Idle 且没有待发字节的连接，是因为它们此刻本来就没有未完成的交互；
+     * InFlight / Writing 的连接必须留着——那正是「不丢请求」的全部内容。
+     */
+    bool drainStep();
+
+    /**
+     * @brief 关闭前把接收缓冲里剩下的字节读掉丢掉（上限 `limitBytes`）。
+     *
+     * 不是为了「处理」它们——停机期间读到的新请求一律不受理——而是为了**关得干净**：
+     * 内核在 close 时如果发现接收缓冲里还有未读数据，会发 RST 而不是 FIN。
+     * RST 会让对端丢掉已经收到的数据（可能包括我们刚发出去的那个完整响应），
+     * 表现为「服务端明明回了、客户端却报连接重置」。
+     *
+     * 上限是必须的：一个正在猛灌数据的对端可以让这个循环永不结束，
+     * 而停机阶段最不能接受的就是「卡在某一条连接上」。
+     */
+    void discardIncoming(Connection *connection, std::size_t limitBytes);
+
     /** 只做登记：真正的摘除 + close 在一轮事件处理结束之后的清理阶段 */
     void closeConnection(Connection *connection, CloseReason reason);
     void removeClosedConnections();
@@ -219,6 +303,22 @@ private:
     std::atomic<std::size_t> _connectionCount{0};
     std::atomic<bool> _stopRequested{false};
 
+    /**
+     * @brief 排空状态（C6）。只由分片线程读，由停止方写。
+     *
+     * 到期时刻用「先写时刻、再置标志（release）」的顺序发布：分片线程读到标志为真时，
+     * 时刻一定已经写好。反过来写会出现「已经开始排空了但截止时刻还是 0」——
+     * 那等于一进排空就超时，所有在飞请求立刻被砍。
+     */
+    std::atomic<bool> _draining{false};
+    std::int64_t _drainStartedMs = 0;
+    std::int64_t _drainDeadlineMs = 0;
+    bool _drainPrepared = false;    /** 首次进入排空时做过一次批量关闭 */
+    bool _drainTimedOut = false;
+    std::size_t _drainSurvivors = 0;
+    std::size_t _drainSurvivorBytes = 0;
+    long long _drainElapsedMs = 0;
+
     /** 下一个连接标识。只在分片线程里自增 */
     std::uint64_t _nextConnectionId = 1;
 
@@ -250,6 +350,7 @@ private:
         std::size_t halfFrameTimeout = 0; /** 半包超时被回收 */
         std::size_t idleTimeout = 0;      /** 空闲超时被回收 */
         std::size_t writeTimeout = 0;     /** 写超时被回收 */
+        std::size_t serverShutdown = 0;   /** 停机时主动断开 */
     } _counters;
 
     /** 复用的事件缓冲，避免每轮都分配一次 */

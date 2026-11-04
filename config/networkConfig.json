@@ -5,6 +5,7 @@
         "maxConnectionsPerShard": 1000,
         "halfFrameTimeoutMs": 10000,
         "idleTimeoutMs": 0,
-        "writeTimeoutMs": 30000
+        "writeTimeoutMs": 30000,
+        "shutdownGraceMs": 5000
     }
 }
