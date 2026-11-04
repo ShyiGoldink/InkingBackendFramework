@@ -6,6 +6,10 @@
 
 #include <framework/Ping.pb.h>
 
+#include <chrono>
+#include <cstdint>
+#include <thread>
+
 namespace
 {
     /**
@@ -46,7 +50,45 @@ namespace
     }
 }
 
-void registerBuiltinNetworkCommands()
+namespace
+{
+    /**
+     * @brief 基准专用指令 `bench-sleep`：按 payload 前 4 字节（小端）忙等对应微秒数。
+     *
+     * 为什么是**忙等**而不是 `sleep_for`：Windows 上 `sleep_for` 的粒度取决于计时器
+     * 分辨率，默认 15.6ms，要 100µs 会睡成 15ms——那样量到的是操作系统的调度粒度，
+     * 不是框架开销。忙等会占满一个核，但基准脚本本来就要求「业务耗时可控且精确」。
+     *
+     * 上限 1 秒：防止一条请求把业务线程钉死（这是压测工具，不是后门）。
+     */
+    bool handleBenchSleep(const CommandFrame &request, std::string &responsePayload)
+    {
+        if (request.payload.size() < 4)
+        {
+            return false;
+        }
+        const auto micros = static_cast<std::uint32_t>(
+            static_cast<unsigned char>(request.payload[0]) |
+            (static_cast<unsigned char>(request.payload[1]) << 8) |
+            (static_cast<unsigned char>(request.payload[2]) << 16) |
+            (static_cast<unsigned char>(request.payload[3]) << 24));
+        if (micros > 1000000u)
+        {
+            return false;
+        }
+
+        const auto until = std::chrono::steady_clock::now() + std::chrono::microseconds(micros);
+        while (std::chrono::steady_clock::now() < until)
+        {
+            // 空转：这一段的长度就是「业务耗时」这个自变量
+        }
+
+        responsePayload = request.payload;
+        return true;
+    }
+}
+
+void registerBuiltinNetworkCommands(bool enableBench)
 {
     CommandRegistry &registry = CommandRegistry::instance();
 
@@ -59,6 +101,10 @@ void registerBuiltinNetworkCommands()
 
     registry.registerCommand("echo", handleEcho);
     registry.registerCommand("ping", handlePing);
+    if (enableBench)
+    {
+        registry.registerCommand("bench-sleep", handleBenchSleep);
+    }
 
     // 注册完之后冻结：之后任何注册都会失败并记 Error，而不是悄悄生效。
     // 分片可能已经在并发查表，往表里插元素会让读端看到不一致的结构。

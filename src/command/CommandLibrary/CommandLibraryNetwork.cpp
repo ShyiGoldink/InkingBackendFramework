@@ -79,5 +79,38 @@ std::vector<Command> CommandLibrary::netCommands() const
              return CommandResult::Continue;
          },
          false},
+        {"network-stat",
+         {"n-stat"},
+         "查看网络服务统计（连接数与分段计时）",
+         [](const std::vector<std::string> &)
+         {
+             const auto modules = ShineStatusChecker::getModules(kNetModuleName);
+             for (auto *module : modules)
+             {
+                 if (module == nullptr)
+                 {
+                     continue;
+                 }
+
+                 auto *net = dynamic_cast<Net *>(module);
+                 if (net == nullptr)
+                 {
+                     continue;
+                 }
+
+                 // 只读原子计数器：分片线程独占的字段一个都不碰，
+                 // 所以这个命令在压测进行中也能安全执行
+                 UIMessageLibrary::addMessage(MessageType::normal, 0.0f,
+                                              net->profileReport() + "\n");
+                 return CommandResult::Continue;
+             }
+
+             UIMessageLibrary::addMessage(
+                 MessageType::error,
+                 0.0f,
+                 "没有找到已注册的 Net 模块，无法读取统计。\n");
+             return CommandResult::Continue;
+         },
+         false},
     };
 }

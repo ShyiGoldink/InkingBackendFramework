@@ -83,8 +83,12 @@ namespace
     }
 }
 
-Shard::Shard(std::size_t index, std::size_t maxConnections, const NetworkTimeouts &timeouts)
-    : _index(index), _maxConnections(maxConnections == 0 ? 1 : maxConnections), _timeouts(timeouts)
+Shard::Shard(std::size_t index, std::size_t maxConnections, const NetworkTimeouts &timeouts,
+             bool profileSegments)
+    : _index(index),
+      _maxConnections(maxConnections == 0 ? 1 : maxConnections),
+      _timeouts(timeouts),
+      _profile(std::make_shared<NetworkProfile>(profileSegments))
 {
 }
 
@@ -237,7 +241,12 @@ void Shard::serve()
             }
         }
 
-        const int readyCount = _poller->wait(_ready, waitMs);
+        int readyCount = 0;
+        {
+            NetworkProfile::Scope scope(*_profile, NetworkProfile::Segment::Wait);
+            readyCount = _poller->wait(_ready, waitMs);
+        }
+        _profile->countLoop();
         if (readyCount < 0)
         {
             ShineLog::log(LogLevel::Error, kNetModuleName, NetworkStage::kShard,
@@ -359,7 +368,10 @@ void Shard::drainIncoming()
 
 void Shard::drainMailbox()
 {
-    _mailbox->drain(_replies);
+    {
+        NetworkProfile::Scope scope(*_profile, NetworkProfile::Segment::Mailbox);
+        _mailbox->drain(_replies);
+    }
     if (_replies.empty())
     {
         return;
@@ -376,6 +388,15 @@ void Shard::drainMailbox()
         {
             ++_counters.droppedReplies;
             continue;
+        }
+
+        if (connection->dispatchedAtNs != 0)
+        {
+            // 业务往返：池排队 + 执行 + 投回来的唤醒延迟。
+            // 这一段不归分片管，但必须由分片量——只有它知道请求什么时候投出去的。
+            _profile->add(NetworkProfile::Segment::Business,
+                         NetworkProfile::nowNs() - connection->dispatchedAtNs);
+            connection->dispatchedAtNs = 0;
         }
 
         if (!reply.handlerOk)
@@ -460,8 +481,12 @@ void Shard::readFrom(Connection *connection)
 
     while (true)
     {
-        const int receivedBytes = ::recv(
-            connection->socket, buffer, static_cast<int>(sizeof(buffer)), 0);
+        int receivedBytes = 0;
+        {
+            NetworkProfile::Scope scope(*_profile, NetworkProfile::Segment::Receive);
+            receivedBytes = ::recv(connection->socket, buffer,
+                                   static_cast<int>(sizeof(buffer)), 0);
+        }
 
         if (receivedBytes == 0)
         {
@@ -508,7 +533,12 @@ bool Shard::consumeFrames(Connection *connection)
     while (connection->state == ConnectionState::Idle)
     {
         CommandFrame frame;
-        const FrameCodec::Status status = connection->codec.next(frame);
+        FrameCodec::Status status = FrameCodec::Status::NeedMoreData;
+        {
+            // 只量 codec.next：派发是独立一段，混在一起就分不出「拆帧慢」还是「入队慢」
+            NetworkProfile::Scope scope(*_profile, NetworkProfile::Segment::Parse);
+            status = connection->codec.next(frame);
+        }
 
         if (status == FrameCodec::Status::NeedMoreData)
         {
@@ -525,6 +555,7 @@ bool Shard::consumeFrames(Connection *connection)
 
         // 到这里才第一次拥有「一条完整消息」
         ++_counters.frames;
+        _profile->countSample();
         if (!dispatchFrame(connection, frame))
         {
             return false;
@@ -556,6 +587,7 @@ bool Shard::dispatchFrame(Connection *connection, const CommandFrame &frame)
     refreshTimers(connection);
 
     auto mailbox = _mailbox;
+    auto profile = _profile; // 跨线程持有：shared_ptr 保证业务任务跑完之前它不会被销毁
     const std::uint64_t connectionId = connection->id;
     const CommandRegistry::Handler *entry = handler;
     CommandFrame request = frame; // 拷一份：业务线程拥有它，分片不再碰
@@ -563,11 +595,20 @@ bool Shard::dispatchFrame(Connection *connection, const CommandFrame &frame)
     ++_counters.dispatched;
 
     Task<std::any> task;
-    task.action = [mailbox, connectionId, entry, request = std::move(request)](
+    task.action = [mailbox, profile, connectionId, entry, request = std::move(request)](
                       const std::vector<std::any> &) -> std::any
     {
+        // 只量 handler 本身：把「排队/唤醒」和「业务真算」分开，
+        // 否则看到 1ms 也说不清是池子反应慢还是业务真的慢
+        const std::int64_t runStart = profile->enabled() ? NetworkProfile::nowNs() : 0;
+
         std::string payload;
         const bool handled = (*entry)(request, payload);
+
+        if (runStart != 0)
+        {
+            profile->add(NetworkProfile::Segment::BusinessRun, NetworkProfile::nowNs() - runStart);
+        }
         if (!handled)
         {
             payload.clear();
@@ -587,12 +628,17 @@ bool Shard::dispatchFrame(Connection *connection, const CommandFrame &frame)
         return {};
     };
 
-    TaskQueueLoop::instance().addTask(std::move(task));
+    {
+        NetworkProfile::Scope scope(*_profile, NetworkProfile::Segment::Dispatch);
+        TaskQueueLoop::instance().addTask(std::move(task));
+    }
+    connection->dispatchedAtNs = NetworkProfile::nowNs();
     return true;
 }
 
 void Shard::flush(Connection *connection)
 {
+    NetworkProfile::Scope scope(*_profile, NetworkProfile::Segment::Send);
     while (connection->hasPendingSend())
     {
         const std::size_t pending = connection->pendingSendBytes();

@@ -67,6 +67,23 @@ struct NetworkConfig
      */
     int shutdownGraceMs = 5000;
 
+    /**
+     * @brief 是否开启分段计时（M10）。
+     *
+     * 默认关。开着时每请求多 5 次单调时钟读（约 100~150 ns），换来「时间花在哪一段」
+     * 的直接答案。排查性能问题时打开，压测报告里也用它；常驻服务不需要。
+     * 运行期可以用 `network-stat` 看累计值。
+     */
+    bool profileSegments = false;
+
+    /**
+     * @brief 是否注册基准用的指令（`bench-sleep`）。
+     *
+     * 默认关，因为它是**故意占用业务线程**的指令（忙等 N 微秒），放进生产就是把
+     * 一个「自伤开关」暴露给所有客户端。只有在跑 M10 的基准时才在配置里打开。
+     */
+    bool enableBenchCommands = false;
+
     /** 给日志和自检用的一行摘要 */
     std::string describe() const;
 };

@@ -49,7 +49,7 @@ void Net::run()
 
     // ① 先注册线上指令，再起分片：注册表在分片第一次查表之前就必须是冻结状态，
     // 否则就成了「运行期改一张正在被并发读的表」。
-    registerBuiltinNetworkCommands();
+    registerBuiltinNetworkCommands(config.enableBenchCommands);
 
     // ② 分片起来：接入线程一开跑就会立刻把新连接交给分片，目标必须已经存在
     std::vector<std::unique_ptr<Shard>> shards;
@@ -58,7 +58,8 @@ void Net::run()
 
     for (std::size_t index = 0; index < config.shardCount; ++index)
     {
-        auto shard = std::make_unique<Shard>(index, config.maxConnectionsPerShard, config.timeouts);
+        auto shard = std::make_unique<Shard>(index, config.maxConnectionsPerShard, config.timeouts,
+                                             config.profileSegments);
         if (!shard->start(errorMessage))
         {
             setStageStatus(NetworkStage::kShard, "启动分片", false,
@@ -75,6 +76,17 @@ void Net::run()
 
     setStageStatus(NetworkStage::kShard, "启动分片", true,
                    std::to_string(shards.size()) + " 个分片已启动");
+
+    {
+        // 登记给 network-stat 用。放在这里而不是构造时：此前分片还在逐个启动，
+        // 半启动状态下被统计没有任何意义。
+        std::lock_guard<std::mutex> guard(_shardsMutex);
+        _shards.clear();
+        for (const auto &shard : shards)
+        {
+            _shards.push_back(shard.get());
+        }
+    }
 
     std::vector<Shard *> shardRefs;
     shardRefs.reserve(shards.size());
@@ -198,11 +210,78 @@ void Net::run()
         "；进程句柄剩余 " + std::to_string(handles);
 
     setStageStatus(NetworkStage::kReport, "上报最终统计", true, summary);
+
+    // 分段计时单独一条：压测报告要的就是它，而压测结束时通常正好是停机时刻。
+    // 没开启时不打这一行，避免日志里出现一条「未开启」的空话。
+    {
+        NetworkProfile::Snapshot totalProfile;
+        bool profiled = false;
+        for (const auto &shard : shards)
+        {
+            const NetworkProfile::Snapshot snapshot = shard->profileSnapshot();
+            profiled = profiled || snapshot.enabled;
+            totalProfile.enabled = true;
+            totalProfile.samples += snapshot.samples;
+            totalProfile.loops += snapshot.loops;
+            for (std::size_t index = 0; index < NetworkProfile::kSegmentCount; ++index)
+            {
+                totalProfile.totalNs[index] += snapshot.totalNs[index];
+            }
+        }
+        if (profiled)
+        {
+            ShineLog::log(LogLevel::Info, kNetModuleName, NetworkStage::kReport,
+                          "分段计时：" + NetworkProfile::describe(totalProfile));
+        }
+    }
     ShineLog::log(LogLevel::Info, kNetModuleName, NetworkStage::kReport,
                   "网络服务最终统计：" + summary);
 
+    {
+        // 必须在 shards 析构之前清掉，否则 network-stat 会拿到悬空指针
+        std::lock_guard<std::mutex> guard(_shardsMutex);
+        _shards.clear();
+    }
+
     setStageStatus(NetworkStage::kShutdown, "停止网络服务", true,
                    std::to_string(shards.size()) + " 个分片与接入线程均已退出");
+}
+
+std::string Net::profileReport()
+{
+    std::vector<Shard *> shards;
+    {
+        std::lock_guard<std::mutex> guard(_shardsMutex);
+        shards = _shards;
+    }
+
+    if (shards.empty())
+    {
+        return "网络服务未运行，没有可读的统计";
+    }
+
+    // 总量按分片累加，好回答「整个服务的时间花在哪」；明细保留每分片一条，
+    // 因为分片之间不均衡本身就是信息（比如某一片连接特别多）
+    NetworkProfile::Snapshot total;
+    total.enabled = false;
+    std::string text;
+    for (const Shard *shard : shards)
+    {
+        const NetworkProfile::Snapshot snapshot = shard->profileSnapshot();
+        total.enabled = total.enabled || snapshot.enabled;
+        total.samples += snapshot.samples;
+        total.loops += snapshot.loops;
+        for (std::size_t index = 0; index < NetworkProfile::kSegmentCount; ++index)
+        {
+            total.totalNs[index] += snapshot.totalNs[index];
+        }
+
+        text += shard->name() + "：连接 " + std::to_string(shard->connectionCount()) + "，" +
+                NetworkProfile::describe(snapshot) + "\n";
+    }
+
+    text += "合计：" + NetworkProfile::describe(total);
+    return text;
 }
 
 void Net::stop()

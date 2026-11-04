@@ -6,6 +6,8 @@
         "halfFrameTimeoutMs": 10000,
         "idleTimeoutMs": 0,
         "writeTimeoutMs": 30000,
-        "shutdownGraceMs": 5000
+        "shutdownGraceMs": 5000,
+        "profileSegments": false,
+        "enableBenchCommands": false
     }
 }

@@ -323,7 +323,9 @@ is not load-bearing for them; the startup banner prints the absolute log path an
         "halfFrameTimeoutMs": 10000,
         "idleTimeoutMs": 0,
         "writeTimeoutMs": 30000,
-        "shutdownGraceMs": 5000
+        "shutdownGraceMs": 5000,
+        "profileSegments": false,
+        "enableBenchCommands": false
     }
 }
 ```
@@ -337,6 +339,8 @@ is not load-bearing for them; the startup banner prints the absolute log path an
 | `idleTimeoutMs` | close a connection with no complete interaction for this long. **0 means disabled**, which is the default: the protocol has no heartbeat, so enabling it will cut any client that stays connected without sending | falls back to 0 (disabled) |
 | `writeTimeoutMs` | close a connection whose send buffer has not drained for this long (the peer reads too slowly or not at all) | falls back to 30000, clamped to 0..3600000 |
 | `shutdownGraceMs` | on shutdown, how long to wait for in-flight replies and pending writes before closing hard. It also bounds how long process exit can take | falls back to 5000, clamped to 0..3600000 |
+| `profileSegments` | enable per-shard segment timing (recv / parse / dispatch / mailbox / send / business round trip / handler). Read it at runtime with `network-stat`, or at shutdown in the final log line | falls back to false |
+| `enableBenchCommands` | register the `bench-sleep` command used by the benchmark suite. It **busy-waits** the number of microseconds given in the payload, so never enable it on a public port | falls back to false |
 
 A missing or malformed file is **not** fatal: the network service still starts, using defaults, and the first
 `Net:05` log line records both what was read and where it came from.
@@ -365,6 +369,28 @@ Since C6 (§6.6) shutdown is staged and each stage is visible in `status`: stop 
 (accepted / frames / dispatched / replies / timeouts / errors / shutdown closes / remaining handles). Connections
 that were idle at shutdown get a clean FIN; connections still waiting on a reply are kept until the reply is written.
 `network-stop` stops the service without exiting the process (`network-run` starts it again).
+
+### 6.3 Benchmarking
+
+```
+tools/netbench/bench_client.cpp   load generator: N connections x M frames, one request in flight,
+                                  driven by the framework's own Poller; prints throughput and
+                                  p50/p90/p99/p99.9/max
+tools/netbench/bench_suite.py     runs the three M10 condition groups (message size / connection
+                                  count / business cost) and prints a table; --repeat 2 for spread
+tools/netbench/timer_bench.cpp    timer heap scaling (insert / cancel per op vs N)
+```
+
+Run it against a running server:
+
+```
+python tools/netbench/bench_suite.py --bin build/bin --repeat 2
+```
+
+The measured result on both Windows and Linux: throughput plateaus at 60k-73k req/s regardless of
+connection count, while `recv + parse + send` costs only ~14 µs per request. The bottleneck is the
+business pool's single queue plus one wake-up per task (`dispatch` costs 35.8 µs on Linux), not the
+network layer. See `docs/NetworkLayerLadder.md` §6.7 for both reports and the next optimization.
 Acceptance moved to `tools/netbench/framed_client.py` (echo, half packet, sticky packet, big frame, ordering,
 ping, unknown command, three invalid-frame cases, slow consumer, 1000 idle connections). `hold_conns.py` and
 `edge_cases.py` send raw bytes and therefore only apply to the pre-C1 server; their headers say so.

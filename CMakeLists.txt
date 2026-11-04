@@ -300,6 +300,20 @@ if(INKING_BUILD_TEST_TOOLS)
     target_include_directories(timer_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_compile_features(timer_bench PRIVATE cxx_std_20)
     message(STATUS "已启用测试工具: timer_bench -> ${CMAKE_BINARY_DIR}/bin")
+
+    # 负载发生器（M10）：复用框架自己的 Poller 驱动上千条连接。
+    # 只链接 Poller + SocketOps，不碰服务端代码——量的是服务端，不是客户端。
+    add_executable(bench_client
+        tools/netbench/bench_client.cpp
+        src/network/Poller.cpp
+        src/network/SocketOps.cpp
+    )
+    target_include_directories(bench_client PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_features(bench_client PRIVATE cxx_std_20)
+    if(WIN32)
+        target_link_libraries(bench_client PRIVATE ws2_32)
+    endif()
+    message(STATUS "已启用测试工具: bench_client -> ${CMAKE_BINARY_DIR}/bin")
 endif()
 
 # 构建完成后，首次复制默认配置到可执行文件同级目录

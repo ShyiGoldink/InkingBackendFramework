@@ -34,6 +34,7 @@
 
 #include "network/Connection.h"
 #include "network/NetworkConfig.h"
+#include "network/NetworkProfile.h"
 #include "network/Poller.h"
 #include "network/ShardMailbox.h"
 #include "network/TimerQueue.h"
@@ -59,7 +60,8 @@ public:
      *        全部连接一起变慢，那是最糟的过载处理方式。
      * @param timeouts 三类超时（C5）。0 表示不启用该类超时
      */
-    Shard(std::size_t index, std::size_t maxConnections, const NetworkTimeouts &timeouts);
+    Shard(std::size_t index, std::size_t maxConnections, const NetworkTimeouts &timeouts,
+          bool profileSegments);
     ~Shard();
 
     Shard(const Shard &) = delete;
@@ -144,6 +146,12 @@ public:
     };
 
     Statistics statistics() const;
+
+    /** 运行期可读的分段计时（计数器是原子的，任意线程均可调） */
+    NetworkProfile::Snapshot profileSnapshot() const
+    {
+        return _profile->snapshot();
+    }
 
     /** 等线程退出。可以重复调用 */
     void join();
@@ -272,6 +280,14 @@ private:
 
     /** 本轮到期的定时器（复用，避免每轮分配） */
     std::vector<ExpiredTimer> _expired;
+
+    /**
+     * @brief 分段计时（M10）。默认关闭，关闭时每个计时点只多一次 bool 判断。
+     *
+     * 放在分片里而不是全局：这些数天然按线程独占写，进程级共享就要加锁，
+     * 而加锁测出来的时间不是服务端的时间，是锁的时间。
+     */
+    std::shared_ptr<NetworkProfile> _profile;
 
     /**
      * 声明顺序就是销毁顺序的逆序，所以这两个成员的位置有讲究：

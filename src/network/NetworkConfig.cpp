@@ -43,7 +43,9 @@ std::string NetworkConfig::describe() const
            "，分片 " + std::to_string(shardCount) +
            "，每分片连接上限 " + std::to_string(maxConnectionsPerShard) +
            "，超时（" + timeouts.describe() + "）" +
-           "，停机排空上限 " + std::to_string(shutdownGraceMs) + "ms";
+           "，停机排空上限 " + std::to_string(shutdownGraceMs) + "ms" +
+           (profileSegments ? "，分段计时开" : "") +
+           (enableBenchCommands ? "，基准指令开" : "");
 }
 
 NetworkConfig loadNetworkConfig(std::string &note)
@@ -74,6 +76,8 @@ NetworkConfig loadNetworkConfig(std::string &note)
     const auto idleTimeout = jsonTool.getValue<int>(*node, "idleTimeoutMs");
     const auto writeTimeout = jsonTool.getValue<int>(*node, "writeTimeoutMs");
     const auto shutdownGrace = jsonTool.getValue<int>(*node, "shutdownGraceMs");
+    const auto profileSegments = jsonTool.getValue<bool>(*node, "profileSegments");
+    const auto enableBenchCommands = jsonTool.getValue<bool>(*node, "enableBenchCommands");
 
     if (port.has_value())
     {
@@ -111,6 +115,14 @@ NetworkConfig loadNetworkConfig(std::string &note)
     {
         // 排空上限用同一套边界：0 表示「不等，直接硬关」
         config.shutdownGraceMs = clampTimeout(*shutdownGrace);
+    }
+    if (profileSegments.has_value())
+    {
+        config.profileSegments = *profileSegments;
+    }
+    if (enableBenchCommands.has_value())
+    {
+        config.enableBenchCommands = *enableBenchCommands;
     }
 
     note = "已从 " + filePath + " 读取：" + config.describe();

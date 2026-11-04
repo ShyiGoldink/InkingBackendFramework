@@ -122,6 +122,15 @@ struct Connection
     /** 断开原因，只在关闭时写一次；用于计数与「这条连接为什么没了」的追溯 */
     CloseReason closeReason = CloseReason::None;
 
+    /**
+     * @brief 这次请求投给业务池的时刻（单调时钟纳秒）。
+     *
+     * 只给分段计时用：响应回来时减一下，就是「业务往返」——包含池排队、执行、
+     * 以及投回分片的唤醒延迟。这一段的数值直接决定该去优化池还是优化网络层。
+     * 不开启计时时它是 0，不会被读。
+     */
+    std::int64_t dispatchedAtNs = 0;
+
     bool isOpen() const
     {
         // 注意是「两个条件」：socket 还有效，且没有进入关闭流程。

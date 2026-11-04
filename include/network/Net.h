@@ -9,6 +9,9 @@
 #include <condition_variable>
 #include <mutex>
 #include <string>
+#include <vector>
+
+class Shard;
 
 /**
  * @brief 网络模块的门面：建立监听、组织分片与接入线程、按序启停。
@@ -59,6 +62,14 @@ public:
      */
     void stop();
 
+    /**
+     * @brief 当前分段计时与每分片连接的快照（供 `network-stat` 命令调用）。
+     *
+     * 从控制台线程调用，所以只碰分片里那些原子计数器；分片线程独占的字段一律不读。
+     * 服务未运行时返回一句说明而不是空串——「没数据」和「没在跑」是两回事。
+     */
+    std::string profileReport();
+
 private:
     /**申请本机网络服务（Windows 上是 WSAStartup） */
     bool applyNetworkServer();
@@ -72,6 +83,16 @@ private:
     void closeListenSocket();
 
     SocketType _acceptSocket = kInvalidSocket; /** 只管 accept 的监听 socket */
+
+    /**
+     * @brief 正在运行的分片（只在 run() 期间非空）。
+     *
+     * 存在的唯一原因是 `network-stat`：它需要从另一个线程找到分片。
+     * 用指针而不是 unique_ptr，是因为所有权仍然在 run() 的局部变量里——
+     * 这个表只是「借用一下看看」，不参与生命周期管理。
+     */
+    std::mutex _shardsMutex;
+    std::vector<Shard *> _shards;
 
     std::atomic<bool> _stopRequested{false}; /** 退出请求：由 stop() 置位 */
     std::mutex _stopMutex;                   /** 只用于让 run() 睡在条件变量上 */

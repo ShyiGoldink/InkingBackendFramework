@@ -25,7 +25,12 @@
  *   - 不做任何阻塞 IO（这里跑在业务线程池上，一条慢 SQL 会占住一个业务线程）。
  */
 
-/** 注册全部线上指令。必须在分片启动之前调用一次（Net::run 负责） */
-void registerBuiltinNetworkCommands();
+/**
+ * @brief 注册全部线上指令。必须在分片启动之前调用一次（Net::run 负责）。
+ *
+ * @param enableBench 是否注册基准专用指令（`bench-sleep`）。
+ *        它会在业务线程上**忙等**指定微秒数，属于故意自伤，只在压测配置里打开。
+ */
+void registerBuiltinNetworkCommands(bool enableBench);
 
 #endif // INKING_BACKEND_FRAMEWORK_NETWORK_COMMAND_REGISTRANT_H
