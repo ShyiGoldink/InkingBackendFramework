@@ -222,8 +222,11 @@ set(INKING_SOURCES
     src/network/Poller.cpp
     src/network/Wakeup.cpp
     src/network/NetworkConfig.cpp
+    src/network/CommandRegistry.cpp
+    src/network/ShardMailbox.cpp
     src/network/Shard.cpp
     src/network/Listener.cpp
+    src/business/NetworkCommandRegistrant.cpp
     basic/ShineBasicModule.cpp
     basic/ShineLog.cpp
     basic/ShineStatusChecker.cpp

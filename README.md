@@ -345,9 +345,16 @@ thread ever touches its socket or buffers.
 
 Since C1 (see `docs/NetworkLayerLadder.md` §6.3) every connection is parsed with `FrameCodec`: a stream whose
 first two bytes are not the protocol magic `0xABCD` is closed immediately, and one frame is one message.
-Acceptance moved to `tools/netbench/framed_client.py` (echo, half packet, sticky packet, big frame, three
-invalid-frame cases, 1000 idle connections). `hold_conns.py` and `edge_cases.py` send raw bytes and therefore
-only apply to the pre-C1 server; their headers say so.
+Acceptance moved to `tools/netbench/framed_client.py` (echo, half packet, sticky packet, big frame, ordering,
+ping, unknown command, three invalid-frame cases, slow consumer, 1000 idle connections). `hold_conns.py` and
+`edge_cases.py` send raw bytes and therefore only apply to the pre-C1 server; their headers say so.
+
+Since C3 (§6.4) a connection has at most one request in flight: the read interest is removed while the
+business thread works, and restored once the response is fully written. Requests go through
+`CommandRegistry`, and **business code has exactly one place to grow** —
+`business/NetworkCommandRegistrant.cpp`. Adding a command is one `.proto` message plus one
+`registerCommand` call; the network layer does not change. `echo` (acceptance and the pure-echo benchmark
+tier) and `ping` (the protobuf template) are registered there today.
 
 
 ## 7. Protocol: frame format and messages
@@ -427,7 +434,7 @@ Notes:
 
 ```text
 basic/         Base classes: self-check stages, logging, module registry (ShineBasicModule / ShineLog / ShineStatusChecker)
-include/       Public headers, grouped by domain: command/ database/ protocol/ thread/ tool/ ui/
+include/       Public headers, grouped by domain: business/ command/ database/ network/ protocol/ thread/ tool/ ui/
 src/           Implementations, mirroring include/
 proto/         protobuf message definitions (C++ is generated from these; generated files are not committed)
 third_party/   Vendored libraries: replxx, nlohmann_json

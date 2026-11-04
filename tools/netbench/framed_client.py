@@ -218,29 +218,126 @@ def case_invalid(host: str, port: int, timeout: float, name: str, header: bytes)
 
 
 def case_slow(host: str, port: int, timeout: float, frames: int = 400) -> bool:
-    """慢消费者：只发不读，服务端写缓冲积压超上限后必须断开
+    """慢消费者：只发不读，验证「压力停在源头」而不是堆在服务端
 
-    不断读是关键：一旦开始 recv，服务端的积压就被排空了，永远碰不到上限。
-    这里只发、不读，直到对端断开（sendall 抛 RST）为止。
+    C2 之后这里**不应该**再靠「写缓冲超上限断开」来实现——一条在飞意味着
+    上一条响应没发完时不会再派发下一条，写缓冲根本涨不起来。真正的背压发生在读侧：
+    服务端一帧一帧地处理，客户端写到内核缓冲满了就写不动了。
+
+    所以本用例判定的东西是：客户端最终**写不动**（超时或对端断开），
+    且在这个过程中没有被灌进无限多的数据。
     """
     sock = connect(host, port, timeout)
     frame = make_frame("echo", b"x" * (64 * 1024))
     sent = 0
-    closed = False
+    blocked = False
+    reset = False
     try:
         for _ in range(frames):
             sock.sendall(frame)
             sent += 1
+    except socket.timeout:
+        blocked = True
     except OSError:
-        closed = True
+        reset = True
     finally:
         sock.close()
 
-    if not closed:
-        print(f"  慢消费者：发了 {sent} 帧（约 {sent * len(frame) / 1048576:.1f} MiB）仍未断开")
-        return False
-    print(f"  慢消费者：发到第 {sent} 帧（约 {sent * len(frame) / 1048576:.1f} MiB）时被断开")
-    return True
+    total_mib = sent * len(frame) / 1048576
+    if reset:
+        print(f"  慢消费者：发到第 {sent} 帧（约 {total_mib:.1f} MiB）时被服务端断开")
+        return True
+    if blocked:
+        print(f"  慢消费者：发到第 {sent} 帧（约 {total_mib:.1f} MiB）后写不动了——读侧背压生效")
+        return True
+    print(f"  慢消费者：{frames} 帧（约 {total_mib:.1f} MiB）全部写完，服务端没有施加背压")
+    return False
+
+
+def decode_frame(raw: bytes):
+    """把一整帧拆成 (command, payload)，用于校验业务回包"""
+    magic, total, command_length = struct.unpack(">HIH", raw[:HEADER_BYTES])
+    if magic != MAGIC or total != len(raw):
+        raise ValueError("回包帧头不合法")
+    command = raw[HEADER_BYTES:HEADER_BYTES + command_length].decode("utf-8")
+    payload = raw[HEADER_BYTES + command_length:]
+    return command, payload
+
+
+def encode_varint(value: int) -> bytes:
+    """protobuf 的 varint 编码（只用于手搓一个 Ping 请求）"""
+    out = bytearray()
+    while True:
+        piece = value & 0x7F
+        value >>= 7
+        if value:
+            out.append(piece | 0x80)
+        else:
+            out.append(piece)
+            return bytes(out)
+
+
+def case_ping(host: str, port: int, timeout: float) -> bool:
+    """ping：protobuf 请求 → 业务处理 → protobuf 响应（验证整条业务链路）"""
+    timestamp = 1700000000123
+    # Ping { int64 timestampMs = 1; } → tag 0x08 + varint
+    request_payload = b"\x08" + encode_varint(timestamp)
+    sock = connect(host, port, timeout)
+    try:
+        sock.sendall(make_frame("ping", request_payload))
+        echoed = read_frame(sock)
+        if echoed is None:
+            print("  ping：连接被提前关闭")
+            return False
+        command, payload = decode_frame(echoed)
+        if command != "ping":
+            print(f"  ping：回包指令名不对（{command}）")
+            return False
+        if payload != request_payload:
+            print(f"  ping：回包内容不对（{payload!r}）")
+            return False
+        print(f"  ping：请求 {len(request_payload)} 字节 → 回包 {len(payload)} 字节，内容一致")
+        return True
+    finally:
+        sock.close()
+
+
+def case_order(host: str, port: int, timeout: float, count: int = 1000) -> bool:
+    """保序：同一连接一次发 N 条，回包顺序必须与请求完全一致
+
+    这个用例专门盯着「一条在飞」的收尾：摘读关注期间后续帧压在 codec 里，
+    恢复读关注时必须主动消化，否则最后的几条永远不回。
+    """
+    sock = connect(host, port, timeout)
+    try:
+        requests = [make_frame("echo", index.to_bytes(4, "big")) for index in range(count)]
+        sock.sendall(b"".join(requests))
+        for index, request in enumerate(requests):
+            echoed = read_frame(sock)
+            if echoed is None:
+                print(f"  保序：第 {index} 条就没回包了")
+                return False
+            if echoed != request:
+                print(f"  保序：第 {index} 条回包与请求不一致（顺序错乱）")
+                return False
+        print(f"  保序：同一连接连发 {count} 条，回包顺序与内容完全一致")
+        return True
+    finally:
+        sock.close()
+
+
+def case_unknown(host: str, port: int, timeout: float) -> bool:
+    """未注册的指令名：服务端应断开，而不是静默忽略"""
+    sock = connect(host, port, timeout)
+    try:
+        sock.sendall(make_frame("no-such-command", b""))
+        if not expect_closed(sock, timeout):
+            print("  未知指令：服务端没有断开")
+            return False
+        print("  未知指令：服务端按预期断开连接")
+        return True
+    finally:
+        sock.close()
 
 
 def case_hold(host: str, port: int, conns: int, hold: float, timeout: float) -> bool:
@@ -285,7 +382,10 @@ def main() -> int:
     parser.add_argument(
         "--case",
         default="all",
-        choices=["all", "echo", "half", "sticky", "big", "badmagic", "badlen", "badcmd", "slow", "hold"],
+        choices=[
+            "all", "echo", "half", "sticky", "big", "order", "ping", "unknown",
+            "badmagic", "badlen", "badcmd", "slow", "hold",
+        ],
     )
     args = parser.parse_args()
 
@@ -300,6 +400,12 @@ def main() -> int:
         results.append(("粘包：三帧一次发", case_sticky(args.host, args.port, args.timeout)))
     if args.case in ("all", "big"):
         results.append(("大包：5000 字节负载", case_big(args.host, args.port, args.timeout)))
+    if args.case in ("all", "order"):
+        results.append(("保序：单连接连发 1000 条", case_order(args.host, args.port, args.timeout)))
+    if args.case in ("all", "ping"):
+        results.append(("ping：protobuf 请求响应", case_ping(args.host, args.port, args.timeout)))
+    if args.case in ("all", "unknown"):
+        results.append(("未知指令：应断开", case_unknown(args.host, args.port, args.timeout)))
     if args.case in ("all", "badmagic"):
         results.append((
             "非法：魔数不对",

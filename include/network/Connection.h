@@ -29,6 +29,7 @@
 #include "protocol/FrameCodec.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 enum class ConnectionState
@@ -50,15 +51,25 @@ enum class ConnectionState
 enum class CloseReason
 {
     None,
-    PeerClosed,    /** recv 返回 0：对端正常关闭 */
-    ReceiveError,  /** recv 报错，或被对端 RST */
-    SendError,     /** send 报错 */
-    InvalidFrame,  /** 帧头不合法：这条流已不可信 */
-    SlowConsumer,  /** 写缓冲积压超过上限：对端只发不读 */
+    PeerClosed,     /** recv 返回 0：对端正常关闭 */
+    ReceiveError,   /** recv 报错，或被对端 RST */
+    SendError,      /** send 报错 */
+    InvalidFrame,   /** 帧头不合法：这条流已不可信 */
+    UnknownCommand, /** 指令名没有注册：对端在说本服务端不支持的话 */
+    SlowConsumer,   /** 写缓冲积压超过上限：对端只发不读 */
 };
 
 struct Connection
 {
+    /**
+     * @brief 分片分配的连接标识（自增，永不重复）。
+     *
+     * 这是跨线程传递的「连接标识」——业务线程只拿它，不拿指针、不拿 socket。
+     * 为什么不用 socket 号：内核会复用 fd，业务线程手里那个号可能在它回来的路上
+     * 就已经属于另一条新连接了；自增标识没有这个问题，也就不需要「代次号」。
+     */
+    std::uint64_t id = 0;
+
     SocketType socket = kInvalidSocket;
     ConnectionState state = ConnectionState::Idle;
 
@@ -96,7 +107,10 @@ struct Connection
 
     bool isOpen() const
     {
-        return socket != kInvalidSocket;
+        // 注意是「两个条件」：socket 还有效，且没有进入关闭流程。
+        // 早先版本用 socket = kInvalidSocket 当「已关」标记，结果清理阶段拿不到
+        // fd 去摘事件集合——把「状态」和「句柄」分开，两种用途才不会互相吃掉。
+        return socket != kInvalidSocket && state != ConnectionState::Closing;
     }
 
     bool hasPendingSend() const
@@ -144,13 +158,13 @@ struct Connection
     /**
      * @brief 标记为「本连接已死」。
      *
-     * 只改状态、不关 fd：真正的 remove + close 集中在一轮事件处理结束之后的清理阶段。
-     * 遍历中途关 fd 就是经典的 use-after-free（后面的回调还在拿这个指针）。
+     * 只改状态、不关 fd、也不清 socket：真正的 remove + close 集中在一轮事件处理
+     * 结束之后的清理阶段。遍历中途关 fd 就是经典的 use-after-free
+     * （后面的回调还在拿这个指针）。
      */
     void markClosing()
     {
         state = ConnectionState::Closing;
-        socket = kInvalidSocket;
     }
 };
 

@@ -1,6 +1,7 @@
 #include "network/Net.h"
 
 #include "basic/ShineLog.h"
+#include "business/NetworkCommandRegistrant.h"
 #include "network/Listener.h"
 #include "network/NetworkConfig.h"
 #include "network/Shard.h"
@@ -45,7 +46,11 @@ void Net::run()
         return;
     }
 
-    // ① 分片先起来：接入线程一开跑就会立刻把新连接交给分片，目标必须已经存在
+    // ① 先注册线上指令，再起分片：注册表在分片第一次查表之前就必须是冻结状态，
+    // 否则就成了「运行期改一张正在被并发读的表」。
+    registerBuiltinNetworkCommands();
+
+    // ② 分片起来：接入线程一开跑就会立刻把新连接交给分片，目标必须已经存在
     std::vector<std::unique_ptr<Shard>> shards;
     shards.reserve(config.shardCount);
     std::string errorMessage;
